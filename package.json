@@ -1,0 +1,29 @@
+{
+  "name": "carrom-arena",
+  "version": "1.0.0",
+  "description": "Carrom Arena - a production-ready HTML5 Carrom board game with realistic physics, offline/local/online multiplayer (Express + Socket.io), server-authoritative shots.",
+  "main": "server/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "carrom",
+    "game",
+    "html5",
+    "canvas",
+    "physics",
+    "socket.io",
+    "multiplayer"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}

@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="description" content="Carrom Arena - realistic HTML5 carrom board game with offline, local and online multiplayer." />
+  <title>Carrom Arena</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='44' fill='%23c9942f'/><circle cx='50' cy='50' r='30' fill='%230b1020'/></svg>" />
+</head>
+<body data-theme="midnight">
+
+  <!-- ══════════════════ LOADING ══════════════════ -->
+  <section id="screen-loading" class="screen active">
+    <div class="loader-wrap">
+      <div class="loader-board">
+        <span class="loader-coin white"></span>
+        <span class="loader-coin black"></span>
+        <span class="loader-coin queen"></span>
+        <span class="loader-striker"></span>
+      </div>
+      <h1 class="brand">CARROM<span>ARENA</span></h1>
+      <div class="progress"><div class="progress-bar" id="loadBar"></div></div>
+      <p class="muted" id="loadMsg">Polishing the board&hellip;</p>
+    </div>
+  </section>
+
+  <!-- ══════════════════ HOME ══════════════════ -->
+  <section id="screen-home" class="screen">
+    <div class="bg-orbs" aria-hidden="true"><i></i><i></i><i></i></div>
+
+    <header class="topbar glass">
+      <div class="profile" id="profileChip" role="button" tabindex="0" title="Edit profile">
+        <div class="avatar" id="profileAvatar">P</div>
+        <div class="profile-meta">
+          <strong id="profileName">Player</strong>
+          <small><span id="profileWins">0</span>W &middot; <span id="profileLosses">0</span>L</small>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button class="icon-btn" id="btnSound" title="Sound">🔊</button>
+        <button class="icon-btn" id="btnMusic" title="Music">🎵</button>
+      </div>
+    </header>
+
+    <main class="menu-wrap">
+      <h1 class="brand big">CARROM<span>ARENA</span></h1>
+      <p class="tagline">Real physics. Real rules. Real friends.</p>
+
+      <nav class="menu glass">
+        <button class="menu-btn primary" data-nav="practice"><span class="mi">🎯</span> Practice<small>Free play, unlimited shots</small></button>
+        <button class="menu-btn" data-nav="local"><span class="mi">🧑‍🤝‍🧑</span> Play Offline<small>2 players, same device</small></button>
+        <button class="menu-btn" data-nav="online"><span class="mi">🌐</span> Play Online<small>Create or join a room</small></button>
+        <button class="menu-btn" data-nav="settings"><span class="mi">⚙️</span> Settings<small>Audio, graphics, theme</small></button>
+        <button class="menu-btn" data-nav="instructions"><span class="mi">📖</span> Instructions<small>Rules &amp; controls</small></button>
+        <button class="menu-btn" data-nav="leaderboard"><span class="mi">🏆</span> Leaderboard<small>Top strikers</small></button>
+        <button class="menu-btn danger" data-nav="exit"><span class="mi">🚪</span> Exit<small>Close the game</small></button>
+      </nav>
+      <footer class="foot muted">Built with Canvas &amp; Socket.io &middot; v1.0</footer>
+    </main>
+  </section>
+
+  <!-- ══════════════════ SETTINGS ══════════════════ -->
+  <section id="screen-settings" class="screen">
+    <div class="sheet glass">
+      <header class="sheet-head">
+        <button class="icon-btn" data-nav="home">←</button>
+        <h2>Settings</h2>
+        <span></span>
+      </header>
+
+      <div class="sheet-body">
+        <label class="row">
+          <span>Player Name</span>
+          <input type="text" id="setName" maxlength="14" placeholder="Player" />
+        </label>
+
+        <label class="row">
+          <span>Music</span>
+          <input type="checkbox" id="setMusic" class="switch" />
+        </label>
+
+        <label class="row">
+          <span>Sound Effects</span>
+          <input type="checkbox" id="setSound" class="switch" checked />
+        </label>
+
+        <label class="row">
+          <span>Master Volume</span>
+          <input type="range" id="setVolume" min="0" max="100" value="70" />
+        </label>
+
+        <label class="row">
+          <span>Graphics Quality</span>
+          <select id="setQuality">
+            <option value="low">Low (best FPS)</option>
+            <option value="medium">Medium</option>
+            <option value="high" selected>High</option>
+          </select>
+        </label>
+
+        <label class="row">
+          <span>Theme</span>
+          <select id="setTheme">
+            <option value="midnight">Midnight</option>
+            <option value="emerald">Emerald</option>
+            <option value="royal">Royal</option>
+            <option value="sunset">Sunset</option>
+          </select>
+        </label>
+
+        <label class="row">
+          <span>Turn Timer (sec)</span>
+          <input type="number" id="setTimer" min="10" max="120" step="5" value="30" />
+        </label>
+
+        <label class="row">
+          <span>Aim Guide</span>
+          <input type="checkbox" id="setGuide" class="switch" checked />
+        </label>
+
+        <label class="row">
+          <span>FPS Counter</span>
+          <input type="checkbox" id="setFps" class="switch" />
+        </label>
+
+        <label class="row">
+          <span>Debug Mode <small class="muted">(F3)</small></span>
+          <input type="checkbox" id="setDebug" class="switch" />
+        </label>
+
+        <hr />
+
+        <label class="row col">
+          <span>Multiplayer Server URL</span>
+          <input type="text" id="setServer" placeholder="https://your-app.onrender.com" />
+          <small class="muted">Leave blank when the page is served by your Node server. Required for GitHub Pages.</small>
+        </label>
+
+        <div class="row">
+          <button class="btn ghost" id="btnResetStats">Reset Stats</button>
+          <button class="btn" id="btnSaveSettings">Save</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════ INSTRUCTIONS ══════════════════ -->
+  <section id="screen-instructions" class="screen">
+    <div class="sheet glass">
+      <header class="sheet-head">
+        <button class="icon-btn" data-nav="home">←</button>
+        <h2>How to Play</h2>
+        <span></span>
+      </header>
+      <div class="sheet-body prose">
+        <h3>Controls</h3>
+        <ul>
+          <li><b>Position:</b> drag the striker along your base line.</li>
+          <li><b>Aim &amp; Power:</b> press anywhere else and drag <i>backwards</i> — slingshot style. The further you pull, the harder the shot.</li>
+          <li><b>Shoot:</b> release. Press <kbd>Esc</kbd> while dragging to cancel.</li>
+          <li><b>Keyboard:</b> <kbd>←</kbd>/<kbd>→</kbd> nudge striker, <kbd>Space</kbd> charge &amp; release, <kbd>P</kbd> pause, <kbd>F3</kbd> debug.</li>
+        </ul>
+
+        <h3>Objective</h3>
+        <p>Pocket all nine of your coins. White plays white, Black plays black. The Queen (red) is worth 3 points but must be <b>covered</b>.</p>
+
+        <h3>Rules implemented</h3>
+        <ul>
+          <li>Pocket one of <b>your</b> coins → you shoot again.</li>
+          <li>Pocket an <b>opponent</b> coin → it counts for them, your turn ends.</li>
+          <li><b>Queen cover:</b> after pocketing the Queen you must pocket one of your own coins on the same or the very next shot. Fail → the Queen returns to the centre.</li>
+          <li><b>Foul</b> (striker pocketed, or your last coin pocketed while the Queen is still on the board): one of your pocketed coins returns to the centre and your turn ends. If you have none pocketed, you owe one (debt) and pay it on your first pocket.</li>
+          <li>Pocket all your coins with the Queen resolved → you win. Timer runs out → turn passes. Turn cap reached → draw.</li>
+        </ul>
+
+        <h3>Physics</h3>
+        <p>Coins are rigid discs with mass, momentum and restitution. Collisions are resolved with true impulse maths, friction decelerates coins linearly (independent of mass, as with real sliding friction), and everything is integrated at a fixed 240&nbsp;Hz sub-step so fast strikers never tunnel through coins.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════ LEADERBOARD ══════════════════ -->
+  <section id="screen-leaderboard" class="screen">
+    <div class="sheet glass">
+      <header class="sheet-head">
+        <button class="icon-btn" data-nav="home">←</button>
+        <h2>Leaderboard</h2>
+        <span></span>
+      </header>
+      <div class="sheet-body">
+        <ol class="board-list" id="leaderList"></ol>
+        <p class="muted center">Demo data — no database attached yet.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════ ONLINE LOBBY ══════════════════ -->
+  <section id="screen-online" class="screen">
+    <div class="sheet glass">
+      <header class="sheet-head">
+        <button class="icon-btn" data-nav="home">←</button>
+        <h2>Play Online</h2>
+        <span class="conn-dot" id="connDot" title="Server status"></span>
+      </header>
+      <div class="sheet-body">
+        <div class="lobby-grid">
+          <div class="lobby-card">
+            <h3>🎲 Create Room</h3>
+            <p class="muted">Get a code, send it to a friend.</p>
+            <button class="btn primary block" id="btnCreateRoom">Create Room</button>
+          </div>
+          <div class="lobby-card">
+            <h3>🔑 Join Room</h3>
+            <p class="muted">Enter the 5-character code.</p>
+            <input type="text" id="joinCode" maxlength="5" placeholder="ABC12" class="code-input" />
+            <button class="btn block" id="btnJoinRoom">Join</button>
+          </div>
+        </div>
+        <label class="row">
+          <span>Join as spectator</span>
+          <input type="checkbox" id="setSpectate" class="switch" />
+        </label>
+        <p class="muted center" id="onlineHint">Not connected.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════ WAITING ROOM ══════════════════ -->
+  <section id="screen-waiting" class="screen">
+    <div class="sheet glass">
+      <header class="sheet-head">
+        <button class="icon-btn" id="btnLeaveRoom">←</button>
+        <h2>Waiting Room</h2>
+        <span></span>
+      </header>
+      <div class="sheet-body">
+        <div class="room-code-box">
+          <small class="muted">ROOM CODE</small>
+          <div class="room-code" id="roomCode">-----</div>
+          <div class="row gap">
+            <button class="btn ghost" id="btnCopyCode">Copy Code</button>
+            <button class="btn ghost" id="btnCopyLink">Copy Invite Link</button>
+          </div>
+        </div>
+
+        <div class="seats">
+          <div class="seat" id="seat0"><div class="avatar lg">?</div><strong>Waiting…</strong><em class="tag white">White</em><span class="ready-pill">Not ready</span></div>
+          <div class="vs">VS</div>
+          <div class="seat" id="seat1"><div class="avatar lg">?</div><strong>Waiting…</strong><em class="tag black">Black</em><span class="ready-pill">Not ready</span></div>
+        </div>
+
+        <p class="muted center" id="spectatorCount"></p>
+        <button class="btn primary block" id="btnReady">I'm Ready</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════ GAME ══════════════════ -->
+  <section id="screen-game" class="screen game">
+    <div class="hud-top glass">
+      <div class="player-card" id="pcard0">
+        <div class="avatar sm" id="pavatar0">1</div>
+        <div class="pc-meta">
+          <strong id="pname0">Player 1</strong>
+          <div class="coin-row"><span class="pip white"></span><span id="pscore0">0</span>/9 <em id="pqueen0" class="queen-badge" hidden>♛</em></div>
+        </div>
+      </div>
+
+      <div class="hud-center">
+        <div class="timer-ring">
+          <svg viewBox="0 0 44 44"><circle class="ring-bg" cx="22" cy="22" r="19"></circle><circle class="ring-fg" id="timerRing" cx="22" cy="22" r="19"></circle></svg>
+          <span id="timerText">30</span>
+        </div>
+        <div class="turn-indicator" id="turnIndicator">Your turn</div>
+      </div>
+
+      <div class="player-card right" id="pcard1">
+        <div class="pc-meta">
+          <strong id="pname1">Player 2</strong>
+          <div class="coin-row"><em id="pqueen1" class="queen-badge" hidden>♛</em> <span id="pscore1">0</span>/9 <span class="pip black"></span></div>
+        </div>
+        <div class="avatar sm" id="pavatar1">2</div>
+      </div>
+    </div>
+
+    <div class="canvas-holder">
+      <canvas id="board" width="900" height="900" aria-label="Carrom board"></canvas>
+      <div class="power-meter" id="powerMeter"><div class="power-fill" id="powerFill"></div><span>POWER</span></div>
+      <div class="fps" id="fps" hidden>60 FPS</div>
+      <div class="toast-stack" id="toasts"></div>
+      <div class="net-badge" id="netBadge" hidden>● live</div>
+    </div>
+
+    <div class="hud-bottom glass">
+      <button class="icon-btn" id="btnPause" title="Pause (P)">⏸</button>
+      <button class="icon-btn" id="btnUndoStriker" title="Reset striker">↺</button>
+      <div class="hint" id="gameHint">Drag the striker to position, then pull back to shoot</div>
+      <button class="icon-btn" id="btnChat" title="Chat" hidden>💬<b class="dot" id="chatDot" hidden></b></button>
+      <button class="icon-btn" id="btnFullscreen" title="Fullscreen">⛶</button>
+    </div>
+
+    <!-- Chat -->
+    <aside class="chat glass" id="chatPanel" hidden>
+      <header><strong>Chat</strong><button class="icon-btn" id="btnChatClose">✕</button></header>
+      <div class="chat-log" id="chatLog"></div>
+      <form class="chat-form" id="chatForm">
+        <input id="chatInput" maxlength="160" placeholder="Say something…" autocomplete="off" />
+        <button class="btn sm" type="submit">Send</button>
+      </form>
+      <div class="quick-chat">
+        <button data-qc="Nice shot!">Nice shot!</button>
+        <button data-qc="Oops.">Oops.</button>
+        <button data-qc="Good game!">Good game!</button>
+        <button data-qc="Hurry up 🙂">Hurry up 🙂</button>
+      </div>
+    </aside>
+  </section>
+
+  <!-- ══════════════════ OVERLAYS ══════════════════ -->
+  <div class="overlay" id="overlay-pause">
+    <div class="dialog glass">
+      <h2>Paused</h2>
+      <button class="btn primary block" id="btnResume">Resume</button>
+      <button class="btn block" id="btnRestart">Restart</button>
+      <button class="btn ghost block" id="btnQuit">Quit to Menu</button>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay-gameover">
+    <div class="dialog glass result">
+      <div class="result-emblem" id="resultEmblem">🏆</div>
+      <h2 id="resultTitle">You Win!</h2>
+      <p id="resultSub" class="muted">Every coin pocketed.</p>
+      <div class="result-scores">
+        <div><small id="rsName0">Player 1</small><strong id="rsScore0">0</strong></div>
+        <div class="dash">—</div>
+        <div><small id="rsName1">Player 2</small><strong id="rsScore1">0</strong></div>
+      </div>
+      <button class="btn primary block" id="btnReplay">Play Again</button>
+      <button class="btn ghost block" id="btnBackHome">Main Menu</button>
+      <p class="muted center" id="rematchStatus" hidden></p>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay-connect">
+    <div class="dialog glass">
+      <div class="spinner"></div>
+      <h2 id="connTitle">Connecting…</h2>
+      <p class="muted" id="connSub">Reaching the match server.</p>
+      <button class="btn ghost block" id="btnConnCancel">Cancel</button>
+    </div>
+  </div>
+
+  <div class="global-toasts" id="globalToasts"></div>
+
+  <!-- ══════════════════ SCRIPTS ══════════════════ -->
+  <script>
+    // Load the Socket.io client from the CDN; if that is blocked, fall back to the
+    // copy served by our own Express server. Offline modes never need it.
+    (function loadSocketIO() {
+      var cdn = document.createElement('script');
+      cdn.src = 'https://cdn.socket.io/4.7.5/socket.io.min.js';
+      cdn.crossOrigin = 'anonymous';
+      cdn.onerror = function () {
+        var local = document.createElement('script');
+        local.src = '/socket.io/socket.io.js';
+        local.onerror = function () { console.warn('[net] socket.io unavailable — online mode disabled'); };
+        document.head.appendChild(local);
+      };
+      document.head.appendChild(cdn);
+    })();
+  </script>
+
+  <script src="js/utils.js"></script>
+  <script src="js/physics.js"></script>
+  <script src="js/coin.js"></script>
+  <script src="js/striker.js"></script>
+  <script src="js/rules.js"></script>
+  <script src="js/board.js"></script>
+  <script src="js/player.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/socket.js"></script>
+  <script src="js/network.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

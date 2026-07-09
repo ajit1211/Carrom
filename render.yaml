@@ -1,0 +1,14 @@
+# Render.com blueprint.
+# Deploy the multiplayer server (it also serves the game's static files).
+# After deploying, put the resulting https URL into the game's Settings -> Server URL
+# if you host the frontend separately (e.g. GitHub Pages).
+services:
+  - type: web
+    name: carrom-arena
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.1

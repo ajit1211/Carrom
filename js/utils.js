@@ -1,0 +1,344 @@
+/* ============================================================
+ * utils.js — shared constants + helpers.
+ *
+ * IMPORTANT: this file is loaded BOTH by the browser (as a classic
+ * <script>) and by the Node server (evaluated inside a `vm` sandbox so
+ * that client and server run *literally the same* physics code).
+ * Therefore it must never touch `window`, `document` or `require`.
+ * Anything the other modules need is published on `globalThis` at the
+ * bottom of the file.
+ * ============================================================ */
+'use strict';
+
+/* ------------------------------------------------------------------
+ * Geometry, in "logical board units". The canvas is always 900x900
+ * logical units and is scaled to whatever CSS size it ends up with,
+ * so physics never depends on screen resolution.
+ * ------------------------------------------------------------------ */
+var CONFIG = (function buildConfig() {
+  var BOARD_SIZE = 900;      // full wooden board incl. frame
+  var FRAME = 78;            // wooden frame thickness
+  var PLAY_MIN = FRAME;      // inner playfield bounds
+  var PLAY_MAX = BOARD_SIZE - FRAME;
+  var PLAY = PLAY_MAX - PLAY_MIN;   // 744
+  var CENTER = BOARD_SIZE / 2;      // 450
+
+  var COIN_R = 15.5;         // ratio-accurate: 3.02cm coin on a 73.66cm bed
+  var STRIKER_R = 20.5;      // 4.13cm striker
+  var POCKET_R = 26;         // 4.45cm pocket, nudged for playability
+  var POCKET_INSET = 6;      // pocket centre pushed slightly into the corner
+
+  // Base-line block (repeated on all four sides; rotated per side).
+  var INSET = 115;                       // distance from playfield edge to the outer base line
+  var GAP = 13;                          // distance between the two base lines
+  var BASE_CIRCLE_R = 12.5;              // red circles that terminate each base line
+  var BASE_X0 = PLAY_MIN + INSET;        // 193
+  var BASE_X1 = PLAY_MAX - INSET;        // 707
+
+  var CENTER_CIRCLE_R = 86;              // big centre circle (8.5cm radius)
+  var INNER_CIRCLE_R = COIN_R + 3;
+
+  return {
+    BOARD_SIZE: BOARD_SIZE,
+    FRAME: FRAME,
+    PLAY_MIN: PLAY_MIN,
+    PLAY_MAX: PLAY_MAX,
+    PLAY: PLAY,
+    CENTER: CENTER,
+
+    COIN_R: COIN_R,
+    STRIKER_R: STRIKER_R,
+    POCKET_R: POCKET_R,
+
+    /* Masses in arbitrary but proportional units (real: ~5.5g vs ~15g). */
+    COIN_MASS: 1.0,
+    QUEEN_MASS: 1.0,
+    STRIKER_MASS: 2.6,
+
+    /* --- Physics tuning ---
+     * The bed is 0.7366 m wide and maps to 744 px, so 1 m ~= 1010 px.
+     * A powdered carrom bed has mu ~= 0.085, i.e. a = mu*g ~= 0.84 m/s^2
+     * ~= 850 px/s^2. Deceleration is independent of mass: that is why a
+     * heavy striker and a light coin coast equally far at equal speed. */
+    FRICTION_DECEL: 850,       // px/s^2
+    ANGULAR_DAMP: 3.0,         // 1/s, purely cosmetic spin decay
+    RESTITUTION: 0.94,         // coin <-> coin (ivory-ish discs are springy)
+    WALL_RESTITUTION: 0.72,    // cushion absorbs more
+    TANGENT_FRICTION: 0.06,    // surface friction during contact (adds spin)
+    SLEEP_SPEED: 7,            // px/s below which a body is snapped to rest
+    SUBSTEP: 1 / 360,          // fixed step: 3200 px/s moves 8.9 px < coin radius
+    MAX_SETTLE_TIME: 16,       // seconds; hard cap for a headless simulation
+    POSITION_SLOP: 0.02,
+    POSITION_PERCENT: 0.85,
+
+    /* --- Shot ---
+     * A real flick leaves the fingernail at roughly 3-5 m/s. 3200 px/s is
+     * ~3.2 m/s, which coasts ~6 board-widths before stopping — exactly the
+     * ricochet-happy feel of a hard carrom shot. */
+    MIN_SHOT_SPEED: 300,
+    MAX_SHOT_SPEED: 3200,
+    MAX_PULL: 190,             // logical px of drag == full power
+
+    /* --- Board markings --- */
+    LAYOUT: {
+      INSET: INSET,
+      GAP: GAP,
+      BASE_CIRCLE_R: BASE_CIRCLE_R,
+      BASE_X0: BASE_X0,
+      BASE_X1: BASE_X1,
+      CENTER_CIRCLE_R: CENTER_CIRCLE_R,
+      INNER_CIRCLE_R: INNER_CIRCLE_R,
+      // Striker rests centred between the two base lines: the outer line sits
+      // INSET from the cushion, the inner one GAP further in.
+      STRIKER_OFFSET: INSET + GAP / 2,
+      // Striker must not overlap the red circles at the line ends.
+      STRIKER_MIN: BASE_X0 + BASE_CIRCLE_R + STRIKER_R,
+      STRIKER_MAX: BASE_X1 - BASE_CIRCLE_R - STRIKER_R
+    },
+
+    POCKETS: [
+      { x: PLAY_MIN + POCKET_INSET, y: PLAY_MIN + POCKET_INSET },
+      { x: PLAY_MAX - POCKET_INSET, y: PLAY_MIN + POCKET_INSET },
+      { x: PLAY_MIN + POCKET_INSET, y: PLAY_MAX - POCKET_INSET },
+      { x: PLAY_MAX - POCKET_INSET, y: PLAY_MAX - POCKET_INSET }
+    ],
+
+    /* --- Rules --- */
+    COINS_PER_SIDE: 9,
+    QUEEN_POINTS: 3,
+    MAX_TURNS: 200,            // safety valve -> draw (a real game ends in ~40)
+    DEFAULT_TURN_TIME: 30,
+
+    /* --- Colours --- */
+    COLORS: {
+      white: '#f2e7cd',
+      whiteEdge: '#a48b5c',
+      black: '#232323',
+      blackEdge: '#0a0a0a',
+      queen: '#c0293a',
+      queenEdge: '#6d1119',
+      striker: '#eef2f8',
+      strikerEdge: '#8d97a8'
+    },
+
+    /* --- Networking --- */
+    NET: {
+      /* If you host the frontend on GitHub Pages, either put your server
+       * URL here or set it in Settings (it is stored in localStorage). */
+      PUBLIC_SERVER: '',
+      RECONNECT_KEY: 'carrom.session'
+    }
+  };
+})();
+
+/* ------------------------------------------------------------------
+ * Small maths / misc helpers.
+ * ------------------------------------------------------------------ */
+var Utils = {
+  clamp: function (v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); },
+  lerp: function (a, b, t) { return a + (b - a) * t; },
+  dist2: function (ax, ay, bx, by) { var dx = ax - bx, dy = ay - by; return dx * dx + dy * dy; },
+  dist: function (ax, ay, bx, by) { return Math.sqrt(Utils.dist2(ax, ay, bx, by)); },
+  deg: function (r) { return r * 180 / Math.PI; },
+  rad: function (d) { return d * Math.PI / 180; },
+
+  /** Shortest signed difference between two angles. */
+  angleDiff: function (a, b) {
+    var d = (a - b) % (Math.PI * 2);
+    if (d > Math.PI) d -= Math.PI * 2;
+    if (d < -Math.PI) d += Math.PI * 2;
+    return d;
+  },
+
+  /** "1:05" from 65 seconds. */
+  formatTime: function (sec) {
+    sec = Math.max(0, Math.floor(sec));
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  },
+
+  /** Non-physics id (never used inside the deterministic simulation). */
+  uid: function (n) {
+    n = n || 8;
+    var s = '', abc = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    for (var i = 0; i < n; i++) s += abc[Math.floor(Math.random() * abc.length)];
+    return s;
+  },
+
+  /**
+   * The canonical 19-coin opening arrangement, generated deterministically.
+   * Queen in the middle, an inner ring of 6 alternating coins touching her,
+   * and an outer ring of 12 alternating coins touching the inner ring.
+   * Result: 9 white, 9 black, 1 queen.
+   */
+  initialLayout: function () {
+    var C = CONFIG.CENTER, R = CONFIG.COIN_R, out = [];
+    var id = 0;
+
+    out.push({ id: id++, type: 'queen', x: C, y: C });
+
+    var i, a;
+    // Inner ring — 6 coins, centres at exactly 2R (touching the queen).
+    for (i = 0; i < 6; i++) {
+      a = -Math.PI / 2 + i * (Math.PI * 2 / 6);
+      out.push({
+        id: id++,
+        type: i % 2 === 0 ? 'white' : 'black',
+        x: C + Math.cos(a) * (2 * R),
+        y: C + Math.sin(a) * (2 * R)
+      });
+    }
+
+    // Outer ring — 12 coins at 4R, rotated 15deg so they nest in the gaps.
+    for (i = 0; i < 12; i++) {
+      a = -Math.PI / 2 + Utils.rad(15) + i * (Math.PI * 2 / 12);
+      out.push({
+        id: id++,
+        type: i % 2 === 0 ? 'black' : 'white',
+        x: C + Math.cos(a) * (4 * R),
+        y: C + Math.sin(a) * (4 * R)
+      });
+    }
+    return out;
+  },
+
+  /**
+   * Striker home position for a player.
+   * Player 0 sits at the bottom (shoots up), player 1 at the top.
+   */
+  strikerHome: function (playerIndex) {
+    var L = CONFIG.LAYOUT;
+    return playerIndex === 0
+      ? { x: CONFIG.CENTER, y: CONFIG.PLAY_MAX - L.STRIKER_OFFSET }
+      : { x: CONFIG.CENTER, y: CONFIG.PLAY_MIN + L.STRIKER_OFFSET };
+  },
+
+  /** Clamp a striker x to the legal span of its base line. */
+  clampStrikerX: function (x) {
+    return Utils.clamp(x, CONFIG.LAYOUT.STRIKER_MIN, CONFIG.LAYOUT.STRIKER_MAX);
+  },
+
+  /** Human-readable label for a coin type. */
+  typeLabel: function (t) { return t === 'queen' ? 'Queen' : (t === 'white' ? 'White' : 'Black'); }
+};
+
+/* ------------------------------------------------------------------
+ * A tiny synchronous event bus (used by Game -> UI, Network -> Game).
+ * ------------------------------------------------------------------ */
+var EventBus = class EventBus {
+  constructor() { this._h = Object.create(null); }
+
+  on(evt, fn) {
+    (this._h[evt] || (this._h[evt] = [])).push(fn);
+    return () => this.off(evt, fn);
+  }
+
+  once(evt, fn) {
+    const off = this.on(evt, (...a) => { off(); fn(...a); });
+    return off;
+  }
+
+  off(evt, fn) {
+    const list = this._h[evt];
+    if (!list) return;
+    const i = list.indexOf(fn);
+    if (i >= 0) list.splice(i, 1);
+  }
+
+  emit(evt, ...args) {
+    const list = this._h[evt];
+    if (!list) return;
+    // copy: handlers may unsubscribe during dispatch
+    for (const fn of list.slice()) {
+      try { fn(...args); } catch (e) { console.error('[bus:' + evt + ']', e); }
+    }
+  }
+};
+
+/* ------------------------------------------------------------------
+ * Particles — purely cosmetic, never affects the simulation.
+ * ------------------------------------------------------------------ */
+var ParticleSystem = class ParticleSystem {
+  constructor(max = 320) {
+    this.max = max;
+    this.items = [];
+  }
+
+  /** Ring of sparks at a collision point. */
+  burst(x, y, count, color, speed = 160, life = 0.35) {
+    if (this.items.length > this.max) return;
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + Math.random() * 0.5;
+      const s = speed * (0.4 + Math.random() * 0.8);
+      this.items.push({
+        x, y,
+        vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+        life, maxLife: life, color,
+        size: 1 + Math.random() * 2.2
+      });
+    }
+  }
+
+  /** Coins swirling down into a pocket. */
+  pocketSwirl(x, y, color) {
+    for (let i = 0; i < 18; i++) {
+      const a = (i / 18) * Math.PI * 2;
+      this.items.push({
+        x: x + Math.cos(a) * 14, y: y + Math.sin(a) * 14,
+        vx: -Math.cos(a) * 60, vy: -Math.sin(a) * 60,
+        life: 0.55, maxLife: 0.55, color, size: 2.4, swirl: true
+      });
+    }
+  }
+
+  update(dt) {
+    for (let i = this.items.length - 1; i >= 0; i--) {
+      const p = this.items[i];
+      p.life -= dt;
+      if (p.life <= 0) { this.items.splice(i, 1); continue; }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      const damp = p.swirl ? 0.90 : 0.94;
+      p.vx *= damp; p.vy *= damp;
+    }
+  }
+
+  draw(ctx) {
+    for (const p of this.items) {
+      const t = p.life / p.maxLife;
+      ctx.globalAlpha = t;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * t, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  clear() { this.items.length = 0; }
+};
+
+/* ------------------------------------------------------------------
+ * localStorage wrapper that degrades gracefully (private mode, Node).
+ * ------------------------------------------------------------------ */
+var Store = {
+  get(key, fallback) {
+    try {
+      const raw = globalThis.localStorage && localStorage.getItem(key);
+      return raw == null ? fallback : JSON.parse(raw);
+    } catch (_) { return fallback; }
+  },
+  set(key, value) {
+    try { globalThis.localStorage && localStorage.setItem(key, JSON.stringify(value)); } catch (_) {}
+  },
+  del(key) {
+    try { globalThis.localStorage && localStorage.removeItem(key); } catch (_) {}
+  }
+};
+
+/* Publish for the Node `vm` sandbox (and harmlessly for the browser). */
+globalThis.CONFIG = CONFIG;
+globalThis.Utils = Utils;
+globalThis.EventBus = EventBus;
+globalThis.ParticleSystem = ParticleSystem;
+globalThis.Store = Store;
