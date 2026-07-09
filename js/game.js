@@ -218,10 +218,36 @@ class Game extends EventBus {
     const s = this.world.striker;
 
     if (Utils.dist(p.x, p.y, s.x, s.y) <= s.r * 1.7) {
-      this.drag = 'move';
+      // Grabbed the striker itself. We cannot know yet whether the player
+      // wants to slide it along the rail or pull it back to shoot, so stay
+      // undecided until the drag actually goes somewhere.
+      this.drag = 'grab';
+      this.grabOrigin = { x: p.x, y: p.y };
     } else {
       this.drag = 'aim';
       this.aim.begin(s.x, s.y, p.x, p.y);
+    }
+  }
+
+  /**
+   * Resolve a 'grab' once the finger has moved far enough to show intent:
+   * dragging BACKWARDS (away from the board, behind the rail) means "pull
+   * the striker back and shoot"; dragging sideways means "reposition".
+   */
+  _resolveGrab(p) {
+    const dx = p.x - this.grabOrigin.x;
+    const dy = p.y - this.grabOrigin.y;
+    if (Math.hypot(dx, dy) < 8) return;                // too small to read
+
+    const seat = this.mode === 'practice' ? 0 : this.state.turn;
+    const back = seat === 0 ? dy : -dy;                 // +ve == pulled backwards
+
+    if (back > Math.abs(dx) * 0.7) {
+      const s = this.world.striker;
+      this.drag = 'aim';
+      this.aim.begin(s.x, s.y, p.x, p.y);
+    } else {
+      this.drag = 'move';
     }
   }
 
@@ -229,6 +255,8 @@ class Game extends EventBus {
     if (!this.drag) return;
     const p = this._toBoard(e.clientX, e.clientY);
     this.pointer = p;
+
+    if (this.drag === 'grab') this._resolveGrab(p);
 
     if (this.drag === 'move') {
       this._placeStriker(p.x);
@@ -548,9 +576,9 @@ class Game extends EventBus {
    * ========================================================== */
 
   _hintText() {
-    if (this.mode === 'practice') return 'Practice — drag the striker, pull back and release';
     if (this.mode === 'online' && this.spectator) return 'Spectating';
-    return 'Drag the striker to position, then pull back to shoot';
+    const base = 'Slide the striker sideways to position · pull it back to aim & shoot';
+    return this.mode === 'practice' ? 'Practice — ' + base : base;
   }
 
   _refreshHud() {
@@ -630,7 +658,7 @@ class Game extends EventBus {
     s.draw(ctx, opts);
 
     if (this.drag === 'aim' && this.aim.active) this._drawAim(ctx);
-    if (this.drag === 'move') this._drawRailGhost(ctx);
+    if (this.drag === 'move' || this.drag === 'grab') this._drawRailGhost(ctx);
 
     this.particles.draw(ctx);
 
@@ -640,69 +668,187 @@ class Game extends EventBus {
     }
   }
 
-  /** Slingshot line, power arc, prediction ray and ghost coin. */
+  /**
+   * Aiming visuals, slingshot style:
+   *   - drag the striker backwards; a ghost striker follows your finger
+   *   - a solid ARROW shoots forward from the striker onto the coin you
+   *     are lined up with, snapping its head to the exact contact point
+   *   - the further you pull, the longer/thicker/hotter the arrow and the
+   *     bigger the power number
+   */
   _drawAim(ctx) {
     const s = this.world.striker;
     const d = this.aim.dir;
     const power = this.aim.power;
+    const col = this._powerColor(power);
 
-    /* --- the pull-back band --- */
+    /* ---------- 1. the pull-back: rubber band + ghost striker ---------- */
     ctx.save();
-    ctx.setLineDash([7, 7]);
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = 'rgba(255,255,255,.35)';
+    ctx.lineCap = 'round';
+
+    // taut band from the striker back to your finger
+    ctx.strokeStyle = 'rgba(255,255,255,.28)';
+    ctx.lineWidth = 2 + power * 3;
     ctx.beginPath();
     ctx.moveTo(s.x, s.y);
     ctx.lineTo(this.aim.pointerX, this.aim.pointerY);
     ctx.stroke();
-    ctx.setLineDash([]);
 
-    /* --- power arc behind the striker --- */
-    const col = power < 0.4 ? '#35d39a' : (power < 0.75 ? '#f0b429' : '#ff5d6c');
-    ctx.strokeStyle = col;
-    ctx.lineWidth = 4;
+    // the striker "pulled back" under your finger
+    ctx.globalAlpha = 0.30 + power * 0.28;
+    ctx.fillStyle = '#eef2f8';
     ctx.beginPath();
-    const base = Math.atan2(-d.y, -d.x);
-    ctx.arc(s.x, s.y, s.r + 9, base - 0.9 * power, base + 0.9 * power);
+    ctx.arc(this.aim.pointerX, this.aim.pointerY, s.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(this.aim.pointerX, this.aim.pointerY, s.r, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
 
-    if (!this.settings.aimGuide) return;
+    if (!this.settings.aimGuide) {
+      this._drawPowerLabel(ctx, s, d, power, col);
+      return;
+    }
 
-    /* --- prediction --- */
+    /* ---------- 2. where does this shot actually land? ---------- */
     const pr = this.world.predict(s.x, s.y, d.x, d.y, s.r, 2);
 
+    // The arrow stops at the first contact; with no coin in the way it
+    // grows with power instead, so the length always *means* something.
+    const reach = 70 + power * 300;
+    const toHit = pr.hitPoint ? Utils.dist(s.x, s.y, pr.hitPoint.x, pr.hitPoint.y) : Infinity;
+    const len = Math.min(reach, toHit);
+
+    const tipX = s.x + d.x * len;
+    const tipY = s.y + d.y * len;
+
     ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,.55)';
-    ctx.lineWidth = 1.6;
-    ctx.setLineDash([10, 8]);
+
+    // faint dashed continuation: the rest of the striker's path incl. bounces
+    ctx.strokeStyle = 'rgba(255,255,255,.30)';
+    ctx.lineWidth = 1.4;
+    ctx.setLineDash([9, 9]);
     ctx.beginPath();
     ctx.moveTo(pr.points[0].x, pr.points[0].y);
     for (let i = 1; i < pr.points.length; i++) ctx.lineTo(pr.points[i].x, pr.points[i].y);
     ctx.stroke();
     ctx.setLineDash([]);
 
+    // the aim arrow itself
+    this._arrow(ctx, s.x + d.x * (s.r + 2), s.y + d.y * (s.r + 2), tipX, tipY, 3 + power * 7, col);
+
+    /* ---------- 3. the coin we are aiming at ---------- */
     if (pr.hit && pr.ghost) {
-      // ghost striker at the moment of contact
-      ctx.strokeStyle = 'rgba(255,255,255,.7)';
-      ctx.lineWidth = 1.4;
+      const hot = pr.hit.type === 'queen' ? '#ff5f6d' : '#7ee0b8';
+
+      // ghost striker frozen at the moment of contact
+      ctx.strokeStyle = 'rgba(255,255,255,.55)';
+      ctx.lineWidth = 1.3;
+      ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.arc(pr.ghost.x, pr.ghost.y, s.r, 0, Math.PI * 2);
       ctx.stroke();
+      ctx.setLineDash([]);
 
-      // where the struck coin will head
-      ctx.strokeStyle = pr.hit.type === 'queen' ? '#ff5f6d' : '#7ee0b8';
-      ctx.lineWidth = 2.4;
+      // pulsing lock-on ring around the target coin
+      const pulse = 0.5 + 0.5 * Math.sin(this._t * 7);
+      ctx.strokeStyle = hot;
+      ctx.globalAlpha = 0.45 + pulse * 0.45;
+      ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(pr.hit.x, pr.hit.y);
-      ctx.lineTo(pr.hit.x + pr.hitNormal.x * 62, pr.hit.y + pr.hitNormal.y * 62);
+      ctx.arc(pr.hit.x, pr.hit.y, pr.hit.r + 3 + pulse * 3, 0, Math.PI * 2);
       ctx.stroke();
+      ctx.globalAlpha = 1;
 
-      ctx.fillStyle = 'rgba(255,255,255,.16)';
-      ctx.beginPath();
-      ctx.arc(pr.hit.x, pr.hit.y, pr.hit.r + 3, 0, Math.PI * 2);
-      ctx.fill();
+      // second arrow: which way the struck coin will travel
+      this._arrow(ctx,
+        pr.hit.x + pr.hitNormal.x * (pr.hit.r + 1),
+        pr.hit.y + pr.hitNormal.y * (pr.hit.r + 1),
+        pr.hit.x + pr.hitNormal.x * (pr.hit.r + 52),
+        pr.hit.y + pr.hitNormal.y * (pr.hit.r + 52),
+        3.4, hot);
     }
+    ctx.restore();
+
+    this._drawPowerLabel(ctx, s, d, power, col);
+  }
+
+  _powerColor(p) {
+    return p < 0.4 ? '#35d39a' : (p < 0.75 ? '#f0b429' : '#ff5d6c');
+  }
+
+  /** A tapered arrow shaft with a solid head, from (x1,y1) to (x2,y2). */
+  _arrow(ctx, x1, y1, x2, y2, width, color) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.hypot(dx, dy);
+    if (len < 6) return;
+    const ux = dx / len, uy = dy / len;
+    const px = -uy, py = ux;                       // perpendicular
+
+    const head = Math.min(20 + width * 1.6, len * 0.55);
+    const hw = width * 1.9 + 5;                    // half-width of the head
+    const bx = x2 - ux * head, by = y2 - uy * head; // where the head starts
+
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = this.settings.quality === 'high' ? 10 : 0;
+
+    // shaft: tapers from thin at the striker to full width at the head
+    ctx.beginPath();
+    ctx.moveTo(x1 + px * width * 0.35, y1 + py * width * 0.35);
+    ctx.lineTo(bx + px * width * 0.5, by + py * width * 0.5);
+    ctx.lineTo(bx - px * width * 0.5, by - py * width * 0.5);
+    ctx.lineTo(x1 - px * width * 0.35, y1 - py * width * 0.35);
+    ctx.closePath();
+    ctx.fill();
+
+    // head
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(bx + px * hw, by + py * hw);
+    ctx.lineTo(bx - px * hw, by - py * hw);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** Power ring + "72%" behind the striker, kept upright when the view flips. */
+  _drawPowerLabel(ctx, s, d, power, col) {
+    const base = Math.atan2(-d.y, -d.x);           // behind the striker
+
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(0,0,0,.35)';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r + 10, base - 1.05, base + 1.05);
+    ctx.stroke();
+
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r + 10, base - 1.05 * power, base + 1.05 * power);
+    ctx.stroke();
+    ctx.restore();
+
+    // percentage, counter-rotated so it never reads upside-down for seat 2
+    const lx = s.x - d.x * (s.r + 34);
+    const ly = s.y - d.y * (s.r + 34);
+    ctx.save();
+    ctx.translate(lx, ly);
+    if (this.flip) ctx.rotate(Math.PI);
+    ctx.font = '700 20px Outfit, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(0,0,0,.6)';
+    ctx.strokeText(Math.round(power * 100) + '%', 0, 0);
+    ctx.fillStyle = col;
+    ctx.fillText(Math.round(power * 100) + '%', 0, 0);
     ctx.restore();
   }
 

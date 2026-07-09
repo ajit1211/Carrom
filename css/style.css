@@ -32,6 +32,11 @@ body[data-theme='sunset']  { --bg-0:#180a0a; --bg-1:#25100e; --bg-2:#361a14; --a
 /* ---------- Reset ---------- */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* The `hidden` attribute must beat our own layout rules. Without this,
+   `.chat { display:flex }` and `.icon-btn { display:grid }` override the
+   UA stylesheet and elements we hide from JS stay on screen. */
+[hidden] { display: none !important; }
+
 html, body {
   height: 100%;
   overscroll-behavior: none;

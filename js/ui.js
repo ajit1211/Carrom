@@ -432,11 +432,10 @@ class UIManager extends EventBus {
   /* ---------------- chat ---------------- */
 
   _bindChat() {
-    this.el.btnChat.addEventListener('click', () => {
-      this.el.chatPanel.hidden = !this.el.chatPanel.hidden;
-      this.el.chatDot.hidden = true;
-    });
-    $id('btnChatClose').addEventListener('click', () => { this.el.chatPanel.hidden = true; });
+    this.el.btnChat.addEventListener('click', () =>
+      this.el.chatPanel.hidden ? this.openChat() : this.closeChat());
+
+    $id('btnChatClose').addEventListener('click', () => this.closeChat());
 
     $id('chatForm').addEventListener('submit', (e) => {
       e.preventDefault();
@@ -445,11 +444,31 @@ class UIManager extends EventBus {
       if (!text) return;
       this.emit('chat', text);
       input.value = '';
+      input.focus();
+    });
+
+    // Esc closes the chat before anything else reacts to it.
+    $id('chatInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); this.closeChat(); }
     });
 
     document.querySelectorAll('.quick-chat button').forEach(b =>
       b.addEventListener('click', () => this.emit('chat', b.dataset.qc)));
   }
+
+  openChat() {
+    this.el.chatPanel.hidden = false;
+    this.el.chatDot.hidden = true;
+    this.el.chatLog.scrollTop = this.el.chatLog.scrollHeight;
+    $id('chatInput').focus();
+  }
+
+  closeChat() {
+    this.el.chatPanel.hidden = true;
+    $id('chatInput').blur();
+  }
+
+  get chatOpen() { return !this.el.chatPanel.hidden; }
 
   addChat(name, text, mine, system) {
     const n = document.createElement('div');
@@ -509,6 +528,7 @@ class UIManager extends EventBus {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
       if (this.current !== 'game') return;
 
+      if (e.key === 'Escape' && this.chatOpen) { this.closeChat(); return; }
       if (e.key === 'p' || e.key === 'P') this.emit('pause-toggle');
       if (e.key === 'Escape') this.emit('escape');
       if (e.key === 'F3') { e.preventDefault(); this.emit('toggle-debug'); }
