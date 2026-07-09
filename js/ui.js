@@ -66,6 +66,7 @@ class UIManager extends EventBus {
       powerMeter: $id('powerMeter'), powerFill: $id('powerFill'),
       fps: $id('fps'), toasts: $id('toasts'), netBadge: $id('netBadge'),
       gameHint: $id('gameHint'),
+      strikerRail: $id('strikerRail'), strikerSlider: $id('strikerSlider'),
 
       roomCode: $id('roomCode'), connDot: $id('connDot'), onlineHint: $id('onlineHint'),
       seats: [$id('seat0'), $id('seat1')], spectatorCount: $id('spectatorCount'),
@@ -266,6 +267,18 @@ class UIManager extends EventBus {
   /* ---------------- game HUD ---------------- */
 
   _bindGameHud() {
+    /* Striker position slider. `input` fires on drag, arrow keys and taps. */
+    const sl = this.el.strikerSlider;
+    sl.addEventListener('input', () => {
+      this._sliderHeld = true;
+      this.emit('striker-slide', sl.value / 1000);
+    });
+    // Once the player lets go, the game is free to re-sync the knob.
+    ['pointerup', 'pointercancel', 'blur', 'change'].forEach(ev =>
+      sl.addEventListener(ev, () => { this._sliderHeld = false; }));
+    // Don't let the arrow keys reach the game while the knob has focus.
+    sl.addEventListener('keydown', (e) => e.stopPropagation());
+
     $id('btnPause').addEventListener('click', () => this.emit('pause'));
     $id('btnUndoStriker').addEventListener('click', () => this.emit('reset-striker'));
     $id('btnFullscreen').addEventListener('click', () => this._fullscreen());
@@ -318,6 +331,29 @@ class UIManager extends EventBus {
     this.el.timerRing.style.strokeDashoffset = String(this.RING_LEN * (1 - t));
     this.el.timerRing.classList.toggle('low', remaining <= 5);
     this.el.timerText.textContent = String(Math.ceil(Math.max(0, remaining)));
+  }
+
+  /**
+   * Reflect the striker's real position on the knob.
+   * Skipped while the player is holding it, otherwise we would fight them.
+   * @param {number} t 0..1 along the rail, already screen-oriented
+   */
+  setStrikerSlider(t) {
+    if (this._sliderHeld) return;
+    this.el.strikerSlider.value = String(Math.round(Utils.clamp(t, 0, 1) * 1000));
+  }
+
+  enableStrikerSlider(on) {
+    this.el.strikerRail.toggleAttribute('disabled', !on);
+    this.el.strikerSlider.disabled = !on;
+  }
+
+  /** Brief red shake: a coin is sitting where you tried to put the striker. */
+  flashStrikerBlocked() {
+    const r = this.el.strikerRail;
+    if (r.classList.contains('blocked')) return;
+    r.classList.add('blocked');
+    setTimeout(() => r.classList.remove('blocked'), 220);
   }
 
   setPower(p, visible) {

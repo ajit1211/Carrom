@@ -161,7 +161,7 @@
       <div class="sheet-body prose">
         <h3>Controls</h3>
         <ul>
-          <li><b>Position:</b> grab the striker and slide it <i>sideways</i> along your base line.</li>
+          <li><b>Position:</b> use the <b>slider</b> under the board, or grab the striker and slide it <i>sideways</i> along your base line.</li>
           <li><b>Aim &amp; Power:</b> grab the striker and pull it <i>backwards</i> — slingshot style. An arrow locks on to the coin you are lined up with, and the further you pull, the longer and hotter the arrow gets. You can also press anywhere on the board and drag back.</li>
           <li><b>Shoot:</b> release. Press <kbd>Esc</kbd> while dragging to cancel.</li>
           <li><b>Keyboard:</b> <kbd>←</kbd>/<kbd>→</kbd> nudge striker, <kbd>Space</kbd> charge &amp; release, <kbd>P</kbd> pause, <kbd>F3</kbd> debug.</li>
@@ -295,6 +295,13 @@
       <div class="fps" id="fps" hidden>60 FPS</div>
       <div class="toast-stack" id="toasts"></div>
       <div class="net-badge" id="netBadge" hidden>● live</div>
+    </div>
+
+    <div class="striker-rail glass" id="strikerRail">
+      <span class="rail-cap" aria-hidden="true">◀</span>
+      <input type="range" id="strikerSlider" min="0" max="1000" value="500"
+             aria-label="Move the striker left and right" />
+      <span class="rail-cap" aria-hidden="true">▶</span>
     </div>
 
     <div class="hud-bottom glass">

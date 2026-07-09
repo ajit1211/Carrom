@@ -49,8 +49,9 @@ class Game extends EventBus {
     this.players = [new Player(0), new Player(1)];
 
     /* input */
-    this.drag = null;           // 'move' | 'aim' | null
+    this.drag = null;           // 'grab' | 'move' | 'aim' | null
     this.pointer = { x: 0, y: 0 };
+    this._sliderOn = null;      // last enabled-state pushed to the slider
     this.keyCharge = 0;
     this.keyChargeDir = 0;
 
@@ -131,6 +132,7 @@ class Game extends EventBus {
     this.awaitingSync = false;
     this.shotPockets = [];
     this._endShown = false;
+    this._sliderOn = null;
     this.aim.cancel();
     this.drag = null;
     this._resetTimer();
@@ -281,12 +283,33 @@ class Game extends EventBus {
     this.ui.setPower(0, false);
   }
 
+  /** @returns {boolean} false when a coin occupies that spot */
   _placeStriker(x) {
     const seat = this.mode === 'practice' ? 0 : this.state.turn;
     const nx = Utils.clampStrikerX(x);
-    if (this.world.strikerBlockedAt(nx, seat)) return;   // cannot overlap a coin
+    if (this.world.strikerBlockedAt(nx, seat)) return false;   // cannot overlap a coin
     const home = Utils.strikerHome(seat);
     this.world.striker.place(nx, home.y);
+    return true;
+  }
+
+  /* ---------- striker rail <-> slider mapping ----------
+   * The slider is screen-oriented: pushing it right always moves the
+   * striker right *as the player sees it*. For seat 2 the whole board is
+   * rotated 180 degrees, so the mapping inverts.
+   */
+
+  _xFromRailT(t) {
+    const L = CONFIG.LAYOUT;
+    const span = L.STRIKER_MAX - L.STRIKER_MIN;
+    return this.flip ? L.STRIKER_MAX - t * span : L.STRIKER_MIN + t * span;
+  }
+
+  _railTFromX(x) {
+    const L = CONFIG.LAYOUT;
+    const span = L.STRIKER_MAX - L.STRIKER_MIN;
+    const t = (x - L.STRIKER_MIN) / span;
+    return Utils.clamp(this.flip ? 1 - t : t, 0, 1);
   }
 
   /** Fire, and in online mode tell the server about it. */
@@ -332,6 +355,12 @@ class Game extends EventBus {
         this.keyCharge = 0;
         this.ui.setPower(0, false);
       }
+    });
+
+    this.ui.on('striker-slide', (t) => {
+      if (!this.canShoot) return;
+      if (this.drag === 'aim') return;              // don't yank it mid-aim
+      if (!this._placeStriker(this._xFromRailT(t))) this.ui.flashStrikerBlocked();
     });
 
     this.ui.on('pause-toggle', () => this.paused ? this.resume() : this.pause());
@@ -468,6 +497,17 @@ class Game extends EventBus {
     for (const c of this.world.coins) c.updateVisual(dt);
     this.world.striker.updateVisual(dt);
     this.particles.update(dt);
+    this._syncStrikerSlider();
+  }
+
+  /** Keep the knob glued to the striker (drag, keys, turn change, reset). */
+  _syncStrikerSlider() {
+    const usable = this.canShoot && this.drag !== 'aim';
+    if (usable !== this._sliderOn) {
+      this._sliderOn = usable;
+      this.ui.enableStrikerSlider(usable);
+    }
+    if (usable) this.ui.setStrikerSlider(this._railTFromX(this.world.striker.x));
   }
 
   /** Turn physics events into sound, sparks and rule bookkeeping. */
@@ -577,7 +617,7 @@ class Game extends EventBus {
 
   _hintText() {
     if (this.mode === 'online' && this.spectator) return 'Spectating';
-    const base = 'Slide the striker sideways to position · pull it back to aim & shoot';
+    const base = 'Use the slider (or drag sideways) to position · pull the striker back to aim & shoot';
     return this.mode === 'practice' ? 'Practice — ' + base : base;
   }
 
