@@ -5,7 +5,8 @@ A production-ready Carrom board game in **HTML5 + CSS3 + vanilla ES6 JavaScript*
 Real rigid-body physics (momentum, mass, restitution, sliding friction, impulse collision resolution). No frameworks, no image assets, no audio files — the board, the coins and every sound effect are generated procedurally at runtime.
 
 ```
-Practice  ·  Local 2-player  ·  Online rooms with invite links, chat, spectators, reconnect
+1 v 1  ·  2 v 2 Doubles  ·  Practice  ·  Local hotseat
+Online rooms with invite links, chat, spectators, reconnect
 ```
 
 ---
@@ -74,16 +75,25 @@ Open **http://localhost:3000**. Open a second tab (or another device on your Wi-
 
 | Action | Control |
 |---|---|
-| Position the striker | drag the striker along your base line |
-| Aim & set power | press anywhere else, drag **backwards** (slingshot) |
+| Position the striker | the **slider** under the board, or `←` `→` |
+| Aim & set power | press anywhere, drag **away** from the striker — a full 360° slingshot |
 | Shoot | release |
 | Cancel a drag | `Esc` |
-| Nudge striker | `←` `→` |
 | Charge & shoot straight | hold and release `Space` |
 | Pause | `P` |
 | Debug overlay | `F3` |
 
-**Rules implemented:** extra turn on pocketing your own coin · opponent coins credited to them · Queen must be covered on the same or next shot · striker-in-pocket foul returns one coin (or creates a debt) · pocketing your last coin before the Queen is a foul · win by clearing your nine coins with the Queen resolved · turn timer, timeout, draw on the turn cap.
+Positioning and aiming are on separate controls, so a drag is never ambiguous: you can pull the striker back from below, from the side, or from in front, and it always fires along `striker − pointer`.
+
+### Formats
+
+**1 v 1** — two players facing each other (seats 0 and 2).
+
+**2 v 2 Doubles** — four players, partners sitting **opposite** each other. Turn order runs clockwise (0 → 1 → 2 → 3), which makes the sides alternate automatically. Coins, fouls, debts, the Queen and the win all belong to the **team**: your partner's pocket counts as yours, and either partner can cover a Queen the other pocketed. An extra turn stays with the player who earned it, not the partner.
+
+The board rotates so your own base line is always at the bottom of your screen, whichever seat you get.
+
+**Rules implemented:** extra turn on pocketing your own coin · opponent coins credited to them · Queen must be covered on the same or next shot (by either partner) · striker-in-pocket foul returns one coin (or creates a team debt) · pocketing your last coin before the Queen is a foul · win by clearing your team's nine coins with the Queen resolved · turn timer, timeout, draw on the turn cap.
 
 ---
 
@@ -174,7 +184,7 @@ Verified in testing: a clean, unobstructed cut shot pockets **93%** of the time;
 
 ## 🎛️ Settings
 
-Player name · music · sound · master volume · graphics quality (low/medium/high — caps DPR, disables shadows, thins the wood grain) · 4 themes · turn timer · aim guide · FPS counter · debug mode · multiplayer server URL.
+Player name · **striker colour** (8 presets plus a custom picker; it travels with you into online rooms) · music · sound · master volume · graphics quality (low/medium/high — caps DPR, disables shadows, thins the wood grain) · 4 themes · turn timer · aim guide · FPS counter · debug mode · multiplayer server URL.
 
 ## 📱 Responsive
 

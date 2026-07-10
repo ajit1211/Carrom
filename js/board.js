@@ -289,9 +289,10 @@ var Board = class Board {
   /* ---------------- overlays drawn on top of the coins ---------------- */
 
   /** Highlights the base rail the current shooter is allowed to use. */
-  drawActiveRail(ctx, playerIndex, color, t) {
+  drawActiveRail(ctx, seat, color, t) {
     const L = CONFIG.LAYOUT;
-    const y = Utils.strikerHome(playerIndex).y;
+    const a = Utils.strikerPos(seat, L.STRIKER_MIN);
+    const b = Utils.strikerPos(seat, L.STRIKER_MAX);
     const pulse = 0.35 + 0.25 * Math.sin(t * 2.6);
 
     ctx.save();
@@ -300,8 +301,8 @@ var Board = class Board {
     ctx.lineWidth = 3;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(L.STRIKER_MIN, y);
-    ctx.lineTo(L.STRIKER_MAX, y);
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
     ctx.stroke();
     ctx.restore();
   }

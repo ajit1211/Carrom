@@ -1,44 +1,59 @@
 /* ============================================================
  * rules.js — official carrom rules, as a pure state machine.
  *
- * Shared verbatim by the client and the authoritative server, so a
- * client can never talk the server into an illegal turn transition.
- * Nothing in here draws, plays sound, or touches the DOM.
+ * Supports both formats:
+ *   Singles (2 players) — seats 0 and 2, facing, one team each.
+ *   Doubles (4 players) — seats 0..3 clockwise, partners facing.
+ *                         team 0 = {0,2} plays White, team 1 = {1,3} Black.
+ *
+ * Everything is keyed on the SEAT that is shooting, but coins, fouls,
+ * debts and victory belong to the TEAM. In singles the two collapse.
+ *
+ * Shared verbatim by the client and the authoritative server, so a client
+ * can never talk the server into an illegal turn transition. Nothing in
+ * here draws, plays sound, or touches the DOM.
  * ============================================================ */
 'use strict';
 
 var RulesEngine = class RulesEngine {
   /**
-   * Fresh match state.
    * @param {'practice'|'local'|'online'} mode
+   * @param {2|4} playerCount
    */
-  static newState(mode) {
+  static newState(mode, playerCount) {
+    const count = playerCount === 4 ? 4 : 2;
     return {
       mode: mode || 'local',
-      colors: ['white', 'black'],   // colors[playerIndex]
-      turn: 0,                      // whose shot it is
-      queenPending: null,           // player index that owes a "cover"
-      queenOwner: null,             // player index that has secured the queen
-      debt: [0, 0],                 // coins owed back to the board after a foul
+      playerCount: count,
+      seats: Utils.seatsFor(count),   // which seats actually play
+      turn: 0,                        // seat whose shot it is
+      queenPending: null,             // TEAM that owes a "cover"
+      queenOwner: null,               // TEAM that has secured the queen
+      debt: [0, 0],                   // per team
       turnCount: 0,
       over: false,
-      winner: null,                 // 0 | 1 | 'draw'
+      winner: null,                   // team index | 'draw'
       reason: '',
-      score: [0, 0]
+      score: [0, 0]                   // per team
     };
   }
 
-  static colorOf(state, playerIndex) { return state.colors[playerIndex]; }
-  static opponent(playerIndex) { return playerIndex === 0 ? 1 : 0; }
+  /* ---------------- seat / team helpers ---------------- */
 
-  /** Coins of this player still sitting on the bed. */
-  static coinsLeft(world, state, playerIndex) {
-    return world.coinsLeft(RulesEngine.colorOf(state, playerIndex));
+  static teamOf(state, seat) { return Utils.teamOf(seat, state.playerCount); }
+  static colorOf(state, seat) { return Utils.colorOfSeat(seat, state.playerCount); }
+  static colorOfTeam(team) { return Utils.colorOfTeam(team); }
+  static otherTeam(team) { return team === 0 ? 1 : 0; }
+  static nextSeat(state, seat) { return Utils.nextSeat(seat, state.playerCount); }
+
+  /** Coins of this team still sitting on the bed. */
+  static coinsLeft(world, state, team) {
+    return world.coinsLeft(RulesEngine.colorOfTeam(team));
   }
 
-  /** Coins this player has banked. */
-  static pocketedCount(world, state, playerIndex) {
-    return CONFIG.COINS_PER_SIDE - RulesEngine.coinsLeft(world, state, playerIndex);
+  /** Coins this team has banked. */
+  static pocketedCount(world, state, team) {
+    return CONFIG.COINS_PER_SIDE - RulesEngine.coinsLeft(world, state, team);
   }
 
   /**
@@ -51,13 +66,15 @@ var RulesEngine = class RulesEngine {
    * @returns {object} a report the UI/network layers can render
    */
   static resolveShot(world, state, pocketEvents, touchedSomething) {
-    const me = state.turn;
-    const opp = RulesEngine.opponent(me);
-    const myColor = RulesEngine.colorOf(state, me);
-    const oppColor = RulesEngine.colorOf(state, opp);
+    const seat = state.turn;
+    const myTeam = RulesEngine.teamOf(state, seat);
+    const oppTeam = RulesEngine.otherTeam(myTeam);
+    const myColor = RulesEngine.colorOfTeam(myTeam);
+    const oppColor = RulesEngine.colorOfTeam(oppTeam);
 
     const report = {
-      player: me,
+      seat,
+      team: myTeam,
       extraTurn: false,
       foul: false,
       foulReason: '',
@@ -94,16 +111,15 @@ var RulesEngine = class RulesEngine {
     }
 
     // Pocketing your last coin while the queen is still on the board is a foul.
-    const myLeftAfter = RulesEngine.coinsLeft(world, state, me);
-    if (!report.foul && myLeftAfter === 0 && world.queenOnBoard()) {
+    if (!report.foul && RulesEngine.coinsLeft(world, state, myTeam) === 0 && world.queenOnBoard()) {
       report.foul = true;
       report.foulReason = 'Last coin before the Queen';
     }
 
     /* ---------- 2. queen cover owed from a previous shot ---------- */
-    if (state.queenPending === me) {
+    if (state.queenPending === myTeam) {
       if (!report.foul && myPotted > 0) {
-        state.queenOwner = me;
+        state.queenOwner = myTeam;
         state.queenPending = null;
         report.queenCovered = true;
         report.messages.push('Queen covered!');
@@ -118,12 +134,12 @@ var RulesEngine = class RulesEngine {
       if (report.foul) {
         RulesEngine._returnQueen(world, state, report);
       } else if (myPotted > 0) {
-        state.queenOwner = me;
+        state.queenOwner = myTeam;
         state.queenPending = null;
         report.queenCovered = true;
         report.messages.push('Queen pocketed & covered!');
       } else {
-        state.queenPending = me;
+        state.queenPending = myTeam;
         report.messages.push('Queen pocketed — cover her next shot');
       }
     }
@@ -132,40 +148,42 @@ var RulesEngine = class RulesEngine {
     if (!report.foul && (myPotted > 0 || queenPotted)) report.extraTurn = true;
 
     if (oppPotted > 0) {
-      report.messages.push('Gifted ' + oppPotted + ' coin(s) to your opponent');
+      report.messages.push('Gifted ' + oppPotted + ' coin(s) to the other team');
     }
 
     /* ---------- 5. foul penalty ---------- */
     if (report.foul) {
       report.extraTurn = false;
       // A pending cover is cancelled by a foul.
-      if (state.queenPending === me) RulesEngine._returnQueen(world, state, report);
+      if (state.queenPending === myTeam) RulesEngine._returnQueen(world, state, report);
 
       const coin = RulesEngine._takeBackOneCoin(world, myColor);
       if (coin) {
         report.penaltyCoin = coin.id;
         report.messages.push('Foul — one coin returned to the centre');
       } else {
-        state.debt[me]++;
-        report.messages.push('Foul — you owe a coin');
+        state.debt[myTeam]++;
+        report.messages.push('Foul — your team owes a coin');
       }
     }
 
     /* ---------- 6. pay outstanding debt ---------- */
-    while (state.debt[me] > 0) {
+    while (state.debt[myTeam] > 0) {
       const coin = RulesEngine._takeBackOneCoin(world, myColor);
       if (!coin) break;
-      state.debt[me]--;
+      state.debt[myTeam]--;
       report.messages.push('Debt paid — a coin went back');
     }
 
     /* ---------- 7. win / draw ---------- */
-    RulesEngine._checkEnd(world, state, report, me, opp);
+    RulesEngine._checkEnd(world, state, report);
 
-    /* ---------- 8. hand over the striker ---------- */
+    /* ---------- 8. hand over the striker ----------
+     * An extra turn keeps the SAME seat shooting — in doubles that means the
+     * same player, not their partner, exactly as at a real board. */
     if (!state.over) {
       state.turnCount++;
-      if (!report.extraTurn) state.turn = opp;
+      if (!report.extraTurn) state.turn = RulesEngine.nextSeat(state, seat);
       world.resetStriker(state.turn);
 
       if (state.turnCount >= CONFIG.MAX_TURNS) {
@@ -185,13 +203,14 @@ var RulesEngine = class RulesEngine {
    * Turn passes; a pending queen cover is forfeited.
    */
   static abandonTurn(world, state) {
-    const me = state.turn;
-    const report = { player: me, timeout: true, messages: ['Time up'], queenReturned: false, over: false, winner: null };
+    const seat = state.turn;
+    const team = RulesEngine.teamOf(state, seat);
+    const report = { seat, team, timeout: true, messages: ['Time up'], queenReturned: false, over: false, winner: null };
 
-    if (state.queenPending === me) RulesEngine._returnQueen(world, state, report);
+    if (state.queenPending === team) RulesEngine._returnQueen(world, state, report);
 
     state.turnCount++;
-    state.turn = RulesEngine.opponent(me);
+    state.turn = RulesEngine.nextSeat(state, seat);
     world.resetStriker(state.turn);
 
     if (state.turnCount >= CONFIG.MAX_TURNS) {
@@ -214,7 +233,7 @@ var RulesEngine = class RulesEngine {
     state.queenOwner = null;
   }
 
-  /** Return the highest-id pocketed coin of `color` to the board (deterministic). */
+  /** Return the lowest-id pocketed coin of `color` to the board (deterministic). */
   static _takeBackOneCoin(world, color) {
     let pick = null;
     for (const c of world.coins) {
@@ -225,22 +244,19 @@ var RulesEngine = class RulesEngine {
     return pick;
   }
 
-  static _checkEnd(world, state, report, me, opp) {
-    const finish = (winner, reason) => {
-      state.over = true;
-      state.winner = winner;
-      state.reason = reason;
-      report.over = true;
-      report.winner = winner;
-      RulesEngine._score(world, state);
-    };
-
-    for (const p of [me, opp]) {
-      if (RulesEngine.coinsLeft(world, state, p) !== 0) continue;
-      if (state.debt[p] > 0) continue;                       // still owes a coin
-      if (state.queenPending === p) continue;                // owes a cover
+  static _checkEnd(world, state, report) {
+    for (const team of [0, 1]) {
+      if (RulesEngine.coinsLeft(world, state, team) !== 0) continue;
+      if (state.debt[team] > 0) continue;                    // still owes a coin
+      if (state.queenPending === team) continue;             // owes a cover
       if (world.queenOnBoard()) continue;                    // queen must be settled first
-      finish(p, 'All coins pocketed');
+
+      state.over = true;
+      state.winner = team;
+      state.reason = 'All coins pocketed';
+      report.over = true;
+      report.winner = team;
+      RulesEngine._score(world, state);
       return;
     }
   }
@@ -248,18 +264,19 @@ var RulesEngine = class RulesEngine {
   /** Winner takes the loser's remaining coins, plus 3 if they hold the queen. */
   static _score(world, state) {
     if (typeof state.winner !== 'number') { state.score = [0, 0]; return; }
-    const w = state.winner, l = RulesEngine.opponent(w);
+    const w = state.winner, l = RulesEngine.otherTeam(w);
     let pts = RulesEngine.coinsLeft(world, state, l);
     if (state.queenOwner === w) pts += CONFIG.QUEEN_POINTS;
     state.score = [0, 0];
     state.score[w] = Math.max(1, pts);
   }
 
-  /** Snapshot of everything the HUD needs. */
+  /** Snapshot of everything the HUD needs. Indexed by TEAM, not seat. */
   static hud(world, state) {
     return {
       turn: state.turn,
-      colors: state.colors.slice(),
+      turnTeam: RulesEngine.teamOf(state, state.turn),
+      playerCount: state.playerCount,
       pocketed: [RulesEngine.pocketedCount(world, state, 0), RulesEngine.pocketedCount(world, state, 1)],
       queenOwner: state.queenOwner,
       queenPending: state.queenPending,

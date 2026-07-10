@@ -69,20 +69,26 @@ class NetworkManager extends EventBus {
 
   /* ---------------- rooms ---------------- */
 
-  async createRoom() {
+  /** @param {2|4} playerCount singles or doubles */
+  async createRoom(playerCount = 2) {
+    const me = Profile.load();
     const res = await this.sock.request('create-room', {
-      name: Profile.load().name,
-      playerId: this.playerId
+      name: me.name,
+      playerId: this.playerId,
+      strikerColor: me.strikerColor,
+      playerCount: playerCount === 4 ? 4 : 2
     });
     this._enter(res);
     return res;
   }
 
   async joinRoom(code, spectate = false) {
+    const me = Profile.load();
     const res = await this.sock.request('join-room', {
       code: String(code).toUpperCase(),
-      name: Profile.load().name,
+      name: me.name,
       playerId: this.playerId,
+      strikerColor: me.strikerColor,
       spectate: !!spectate
     });
     this._enter(res);
@@ -124,11 +130,11 @@ class NetworkManager extends EventBus {
   ready(flag) { this.sock.send('player-ready', { ready: flag }); }
 
   /**
-   * Ask the server to run our shot. `x` is the striker's chosen position
-   * on the base rail, so the server can validate it against the rules.
+   * Ask the server to run our shot. `u` is the striker's chosen position
+   * along the base rail, so the server can validate it against the rules.
    */
-  shoot(x, angle, power) {
-    this.sock.send('shoot', { x, angle, power });
+  shoot(u, angle, power) {
+    this.sock.send('shoot', { u, angle, power });
   }
 
   chat(text) { this.sock.send('chat', { text: String(text).slice(0, 160) }); }

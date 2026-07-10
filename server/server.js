@@ -89,13 +89,17 @@ function makeCode() {
 }
 
 class Room {
-  constructor(code) {
+  /** @param {2|4} playerCount singles uses seats 0 & 2; doubles uses all four. */
+  constructor(code, playerCount) {
     this.code = code;
-    /** @type {Array<null|{playerId,name,socketId,ready,connected,index}>} */
-    this.players = [null, null];
+    this.playerCount = playerCount === 4 ? 4 : 2;
+    this.seats = Utils.seatsFor(this.playerCount);
+
+    /** Sparse, indexed by SEAT (0 bottom, 1 left, 2 top, 3 right). */
+    this.players = [null, null, null, null];
     this.spectators = new Set();       // socket ids
     this.world = World.fromLayout();
-    this.state = RulesEngine.newState('online');
+    this.state = RulesEngine.newState('online', this.playerCount);
     this.started = false;
     this.rematch = new Set();          // playerIds
     this.turnTimer = null;
@@ -108,44 +112,42 @@ class Room {
     return this.players.findIndex(p => p && p.playerId === playerId);
   }
 
-  seatOfSocket(socketId) {
-    return this.players.findIndex(p => p && p.socketId === socketId);
-  }
-
+  /** First unoccupied playing seat, or -1. Seats fill in turn order. */
   freeSeat() {
-    return this.players.findIndex(p => !p);
+    for (const s of this.seats) if (!this.players[s]) return s;
+    return -1;
   }
 
   get occupied() {
-    return this.players.filter(Boolean).length;
+    return this.seats.filter(s => this.players[s]).length;
   }
 
+  get full() { return this.occupied === this.playerCount; }
+
   get liveConnections() {
-    return this.players.filter(p => p && p.connected).length + this.spectators.size;
+    return this.seats.filter(s => this.players[s] && this.players[s].connected).length + this.spectators.size;
   }
 
   publicView() {
     return {
       code: this.code,
+      playerCount: this.playerCount,
       players: this.players.map(p => p ? {
-        index: p.index, name: p.name, ready: p.ready, connected: p.connected, id: p.playerId
+        index: p.index, name: p.name, ready: p.ready, connected: p.connected,
+        id: p.playerId, strikerColor: p.strikerColor
       } : null),
       spectators: this.spectators.size,
       started: this.started
     };
   }
 
-  snapshot() {
-    return { world: this.world.serialize(), state: this.state };
-  }
-
   reset() {
     this.world.reset();
-    this.state = RulesEngine.newState('online');
+    this.state = RulesEngine.newState('online', this.playerCount);
     this.world.resetStriker(this.state.turn);
     this.started = false;
     this.rematch.clear();
-    for (const p of this.players) if (p) p.ready = false;
+    for (const s of this.seats) if (this.players[s]) this.players[s].ready = false;
     this.clearTurnTimer();
   }
 
@@ -192,7 +194,7 @@ function scheduleEmptyCheck(room) {
 function startGame(room) {
   room.started = true;
   room.world.reset();
-  room.state = RulesEngine.newState('online');
+  room.state = RulesEngine.newState('online', room.playerCount);
   room.world.resetStriker(room.state.turn);
   room.rematch.clear();
 
@@ -203,17 +205,18 @@ function startGame(room) {
   });
   io.to(room.code).emit('turn-change', room.state.turn);
   room.armTurnTimer();
-  console.log('[room] %s started', room.code);
+  console.log('[room] %s started (%dp)', room.code, room.playerCount);
 }
 
 /**
  * Run one shot. This is the only place the authoritative world mutates
  * during play, and it is identical to what the clients run locally.
+ * @param {number} u rail coordinate the shooter placed the striker at
  */
-function applyShot(room, seat, x, angle, power) {
+function applyShot(room, seat, u, angle, power) {
   const world = room.world;
 
-  world.resetStriker(seat, x);
+  world.resetStriker(seat, u);
   world.shoot(angle, power);
   world.simulate();
 
@@ -240,11 +243,19 @@ function applyShot(room, seat, x, angle, power) {
     io.to(room.code).emit('game-over', { state: room.state, world: world.serialize() });
     systemMessage(room, room.state.winner === 'draw'
       ? 'Draw — ' + room.state.reason
-      : (room.players[room.state.winner] ? room.players[room.state.winner].name : 'Player') + ' wins!');
+      : teamNames(room, room.state.winner) + (room.playerCount === 4 ? ' win!' : ' wins!'));
   } else {
     room.armTurnTimer();
   }
   return report;
+}
+
+/** "Ajit & Ravi" for a doubles team, "Ajit" for singles. */
+function teamNames(room, team) {
+  return room.seats
+    .filter(s => Utils.teamOf(s, room.playerCount) === team)
+    .map(s => room.players[s] ? room.players[s].name : 'Player')
+    .join(' & ');
 }
 
 /** The shooter never played. Advance the turn on their behalf. */
@@ -286,14 +297,17 @@ io.on('connection', (socket) => {
     const playerId = String(p.playerId || '').slice(0, 40);
     if (!playerId) return fail(cb, 'Missing player id');
 
-    const room = new Room(makeCode());
+    const room = new Room(makeCode(), Number(p.playerCount) === 4 ? 4 : 2);
     rooms.set(room.code, room);
 
-    room.players[0] = { playerId, name, socketId: socket.id, ready: false, connected: true, index: 0 };
+    room.players[0] = {
+      playerId, name, socketId: socket.id, ready: false, connected: true,
+      index: 0, strikerColor: sanitizeColor(p.strikerColor)
+    };
     socket.join(room.code);
     socket.data.session = { code: room.code, playerId, spectator: false };
 
-    console.log('[room] %s created by %s', room.code, name);
+    console.log('[room] %s created by %s (%dp)', room.code, name, room.playerCount);
     ack(cb, { room: room.publicView(), seat: 0, state: room.state, world: room.world.serialize(), started: false });
     scheduleEmptyCheck(room);
   });
@@ -316,7 +330,10 @@ io.on('connection', (socket) => {
       const free = room.freeSeat();
       if (free >= 0 && !room.started) {
         seat = free;
-        room.players[seat] = { playerId, name, socketId: socket.id, ready: false, connected: true, index: seat };
+        room.players[seat] = {
+          playerId, name, socketId: socket.id, ready: false, connected: true,
+          index: seat, strikerColor: sanitizeColor(p.strikerColor)
+        };
       }
     }
 
@@ -383,9 +400,8 @@ io.on('connection', (socket) => {
     room.players[seat].ready = !!p.ready;
     broadcastRoom(room);
 
-    if (room.occupied === 2 && room.players.every(pl => pl && pl.ready && pl.connected)) {
-      startGame(room);
-    }
+    const allReady = room.seats.every(s => room.players[s] && room.players[s].ready && room.players[s].connected);
+    if (room.full && allReady) startGame(room);
   });
 
   /* ---------- shoot ---------- */
@@ -400,14 +416,14 @@ io.on('connection', (socket) => {
 
     const angle = Number(p.angle);
     const power = Number(p.power);
-    let x = Number(p.x);
-    if (!isFinite(angle) || !isFinite(power) || !isFinite(x)) return;
-    x = Utils.clampStrikerX(x);
+    let u = Number(p.u);
+    if (!isFinite(angle) || !isFinite(power) || !isFinite(u)) return;
+    u = Utils.clampStrikerU(u);
     const pw = Math.max(0, Math.min(1, power));
 
     // Everyone else needs to play the same shot locally for the animation.
-    socket.to(room.code).emit('shot', { seat, x, angle, power: pw });
-    applyShot(room, seat, x, angle, pw);
+    socket.to(room.code).emit('shot', { seat, u, angle, power: pw });
+    applyShot(room, seat, u, angle, pw);
   });
 
   /* ---------- the shooter admits they ran out of time ---------- */
@@ -444,12 +460,11 @@ io.on('connection', (socket) => {
     if (seat < 0) return;
 
     room.rematch.add(s.playerId);
-    io.to(room.code).emit('rematch-status', { count: room.rematch.size });
+    io.to(room.code).emit('rematch-status', { count: room.rematch.size, of: room.playerCount });
 
-    if (room.rematch.size >= 2 && room.occupied === 2) {
-      io.to(room.code).emit('rematch-status', { count: 2, restarting: true });
+    if (room.rematch.size >= room.playerCount && room.full) {
+      io.to(room.code).emit('rematch-status', { count: room.playerCount, of: room.playerCount, restarting: true });
       room.reset();
-      // Loser of the previous game shoots first — classic house rule.
       setTimeout(() => startGame(room), 350);
     }
   });
@@ -516,6 +531,11 @@ io.on('connection', (socket) => {
 function sanitizeName(n) {
   const s = String(n || '').replace(/[<>&"']/g, '').trim().slice(0, 14);
   return s || 'Player';
+}
+
+/** Only ever echo back a literal #rrggbb — it goes straight into the DOM. */
+function sanitizeColor(c) {
+  return /^#[0-9a-f]{6}$/i.test(String(c || '')) ? String(c) : CONFIG.DEFAULT_STRIKER_COLOR;
 }
 
 /* ==========================================================

@@ -17,11 +17,17 @@ class UIManager extends EventBus {
     this.profile = Profile.load();
     this._toastTimer = null;
 
+    this.createCount = 2;       // format chosen on the Create Room card
+    this._players = [];         // seat -> Player, for HUD labels
+    this._playerCount = 2;
+
     this._cacheNodes();
     this._bindNav();
     this._bindSettings();
+    this._bindStrikerColor();
     this._bindGameHud();
     this._bindLobby();
+    this._bindFormat();
     this._bindChat();
     this._bindOverlays();
     this._bindKeys();
@@ -29,6 +35,68 @@ class UIManager extends EventBus {
     this.applyTheme(this.settings.theme);
     this.renderProfile();
     this.renderLeaderboard();
+  }
+
+  /* ---------------- match format ---------------- */
+
+  _bindFormat() {
+    // Segmented control on the Create Room card.
+    this.el.formatSeg.querySelectorAll('button').forEach(b => {
+      b.addEventListener('click', () => {
+        this.el.formatSeg.querySelectorAll('button').forEach(x => x.classList.remove('on'));
+        b.classList.add('on');
+        this.createCount = Number(b.dataset.count);
+        if (this.settings.sound) audio.click();
+      });
+    });
+
+    // "Play Offline" asks how many people are round the table.
+    this.overlays.format.querySelectorAll('[data-local]').forEach(b => {
+      b.addEventListener('click', () => {
+        this.closeOverlay('format');
+        this.emit('local-format', Number(b.dataset.local));
+      });
+    });
+    $id('btnFormatCancel').addEventListener('click', () => this.closeOverlay('format'));
+  }
+
+  askLocalFormat() { this.openOverlay('format'); }
+
+  /* ---------------- striker colour ---------------- */
+
+  _bindStrikerColor() {
+    const grid = this.el.strikerSwatches;
+    grid.innerHTML = CONFIG.STRIKER_COLORS.map(c =>
+      `<button type="button" class="swatch" data-color="${c.face}" title="${c.name}"
+               style="--face:${c.face};--rim:${c.rim}"><span></span></button>`
+    ).join('');
+
+    grid.addEventListener('click', (e) => {
+      const b = e.target.closest('.swatch');
+      if (!b) return;
+      this._pickStrikerColor(b.dataset.color);
+      if (this.settings.sound) audio.click();
+    });
+
+    this.el.setStrikerCustom.addEventListener('input', (e) => this._pickStrikerColor(e.target.value));
+
+    this._pickStrikerColor(this.profile.strikerColor, true);
+  }
+
+  _pickStrikerColor(hex, silent) {
+    if (!/^#[0-9a-f]{6}$/i.test(hex || '')) return;
+    this.profile.strikerColor = hex;
+    Profile.save(this.profile);
+
+    const skin = Player.skinFor(hex);
+    this.el.strikerPreview.style.setProperty('--face', skin.face);
+    this.el.strikerPreview.style.setProperty('--rim', skin.rim);
+    this.el.setStrikerCustom.value = hex;
+
+    this.el.strikerSwatches.querySelectorAll('.swatch').forEach(s =>
+      s.classList.toggle('on', s.dataset.color.toLowerCase() === hex.toLowerCase()));
+
+    if (!silent) this.emit('striker-color', hex);
   }
 
   /* ---------------- nodes ---------------- */
@@ -47,7 +115,8 @@ class UIManager extends EventBus {
     this.overlays = {
       pause: $id('overlay-pause'),
       gameover: $id('overlay-gameover'),
-      connect: $id('overlay-connect')
+      connect: $id('overlay-connect'),
+      format: $id('overlay-format')
     };
     this.el = {
       loadBar: $id('loadBar'), loadMsg: $id('loadMsg'),
@@ -60,6 +129,7 @@ class UIManager extends EventBus {
       pavatar: [$id('pavatar0'), $id('pavatar1')],
       pscore: [$id('pscore0'), $id('pscore1')],
       pqueen: [$id('pqueen0'), $id('pqueen1')],
+      pbar: [$id('pbar0'), $id('pbar1')],
 
       timerRing: $id('timerRing'), timerText: $id('timerText'),
       turnIndicator: $id('turnIndicator'),
@@ -69,8 +139,12 @@ class UIManager extends EventBus {
       strikerRail: $id('strikerRail'), strikerSlider: $id('strikerSlider'),
 
       roomCode: $id('roomCode'), connDot: $id('connDot'), onlineHint: $id('onlineHint'),
-      seats: [$id('seat0'), $id('seat1')], spectatorCount: $id('spectatorCount'),
-      btnReady: $id('btnReady'), joinCode: $id('joinCode'),
+      seatGrid: $id('seatGrid'), formatBadge: $id('formatBadge'),
+      spectatorCount: $id('spectatorCount'),
+      btnReady: $id('btnReady'), joinCode: $id('joinCode'), formatSeg: $id('formatSeg'),
+
+      strikerSwatches: $id('strikerSwatches'), setStrikerCustom: $id('setStrikerCustom'),
+      strikerPreview: $id('strikerPreview'),
 
       chatPanel: $id('chatPanel'), chatLog: $id('chatLog'), chatDot: $id('chatDot'),
       btnChat: $id('btnChat'),
@@ -295,34 +369,65 @@ class UIManager extends EventBus {
     else d.exitFullscreen && d.exitFullscreen();
   }
 
-  setPlayers(p0, p1) {
-    [p0, p1].forEach((p, i) => {
-      this.el.pname[i].textContent = p.name;
-      this.el.pavatar[i].textContent = p.initial;
-    });
+  /** Everyone on a team, e.g. "Ajit & Ravi" for doubles. */
+  teamNames(team) {
+    return Utils.seatsFor(this._playerCount)
+      .filter(s => Utils.teamOf(s, this._playerCount) === team)
+      .map(s => this._players[s] ? this._players[s].name : '—')
+      .join(' & ');
+  }
+
+  /**
+   * @param {Player[]} players sparse, indexed by seat
+   * @param {2|4} playerCount
+   */
+  setPlayers(players, playerCount, localSeat) {
+    this._players = players;
+    this._playerCount = playerCount;
+    this._localSeat = localSeat;
+
+    for (let team = 0; team < 2; team++) {
+      const names = this.teamNames(team);
+      this.el.pname[team].textContent = names;
+      this.el.pname[team].title = names;
+      const first = Utils.seatsFor(playerCount).find(s => Utils.teamOf(s, playerCount) === team);
+      const p = players[first];
+      this.el.pavatar[team].textContent = p ? p.initial : '?';
+    }
+    document.getElementById('screen-game').classList.toggle('doubles', playerCount === 4);
   }
 
   /** @param {object} hud from RulesEngine.hud() */
-  setHud(hud, localSeat) {
-    for (let i = 0; i < 2; i++) {
-      const prev = this.el.pscore[i].textContent;
-      const val = String(hud.pocketed[i]);
+  setHud(hud, ctx) {
+    const localTeam = (ctx && ctx.localSeat != null)
+      ? Utils.teamOf(ctx.localSeat, hud.playerCount) : null;
+
+    for (let team = 0; team < 2; team++) {
+      const prev = this.el.pscore[team].textContent;
+      const val = String(hud.pocketed[team]);
       if (prev !== val) {
-        this.el.pscore[i].textContent = val;
-        this.el.pscore[i].classList.remove('score-bump');
-        void this.el.pscore[i].offsetWidth;
-        this.el.pscore[i].classList.add('score-bump');
+        this.el.pscore[team].textContent = val;
+        this.el.pscore[team].classList.remove('score-bump');
+        void this.el.pscore[team].offsetWidth;
+        this.el.pscore[team].classList.add('score-bump');
       }
-      this.el.pcard[i].classList.toggle('active', hud.turn === i && !hud.over);
-      this.el.pqueen[i].hidden = hud.queenOwner !== i;
+      this.el.pbar[team].style.width = (hud.pocketed[team] / CONFIG.COINS_PER_SIDE * 100) + '%';
+      this.el.pcard[team].classList.toggle('active', hud.turnTeam === team && !hud.over);
+      this.el.pqueen[team].hidden = hud.queenOwner !== team;
     }
 
+    const shooter = this._players[hud.turn];
     if (hud.over) {
       this.el.turnIndicator.textContent = 'Game over';
-    } else if (localSeat == null) {
-      this.el.turnIndicator.textContent = (hud.turn === 0 ? 'White' : 'Black') + '’s turn';
+    } else if (localTeam == null) {
+      // local hotseat / spectator: name whoever is actually shooting
+      this.el.turnIndicator.textContent = (shooter ? shooter.name : 'Player') + '’s turn';
+    } else if (hud.turn === ctx.localSeat) {
+      this.el.turnIndicator.textContent = 'Your turn';
+    } else if (hud.playerCount === 4 && hud.turnTeam === localTeam) {
+      this.el.turnIndicator.textContent = 'Partner’s turn';
     } else {
-      this.el.turnIndicator.textContent = hud.turn === localSeat ? 'Your turn' : 'Opponent’s turn';
+      this.el.turnIndicator.textContent = (shooter ? shooter.name : 'Opponent') + '’s turn';
     }
   }
 
@@ -397,7 +502,7 @@ class UIManager extends EventBus {
   /* ---------------- lobby / waiting ---------------- */
 
   _bindLobby() {
-    $id('btnCreateRoom').addEventListener('click', () => this.emit('create-room', { spectate: false }));
+    $id('btnCreateRoom').addEventListener('click', () => this.emit('create-room', { playerCount: this.createCount }));
     $id('btnJoinRoom').addEventListener('click', () => {
       const code = this.el.joinCode.value.trim().toUpperCase();
       if (code.length < 4) return this.toast('Enter a valid room code', 'bad');
@@ -432,31 +537,53 @@ class UIManager extends EventBus {
     }
   }
 
-  setConnected(on) {
+  setConnected(on, reason) {
     this.el.connDot.classList.toggle('on', on);
-    this.el.onlineHint.textContent = on ? 'Connected to the match server.' : 'Not connected — check the Server URL in Settings.';
+    this.el.onlineHint.textContent = on
+      ? 'Connected to the match server.'
+      : (reason || SocketClient.explainNoServer());
   }
 
+  /**
+   * Render the lobby seats. Singles shows the two facing seats; doubles shows
+   * all four grouped into their teams, so partners are visibly paired.
+   */
   setRoom(room, mySeat) {
+    const count = room.playerCount === 4 ? 4 : 2;
+    this._playerCount = count;
+
     this.el.roomCode.textContent = room.code;
-    for (let i = 0; i < 2; i++) {
-      const seat = this.el.seats[i];
-      const p = room.players[i];
-      const av = seat.querySelector('.avatar');
-      const nm = seat.querySelector('strong');
-      const rd = seat.querySelector('.ready-pill');
-      if (p) {
-        av.textContent = (p.name[0] || '?').toUpperCase();
-        nm.textContent = p.name + (i === mySeat ? ' (you)' : '');
-        rd.textContent = p.ready ? 'Ready' : (p.connected ? 'Not ready' : 'Disconnected');
-        seat.classList.toggle('ready', !!p.ready);
-      } else {
-        av.textContent = '?';
-        nm.textContent = 'Waiting…';
-        rd.textContent = 'Empty';
-        seat.classList.remove('ready');
-      }
-      seat.classList.toggle('me', i === mySeat);
+    this.el.formatBadge.textContent = count === 4 ? '2 v 2 · Doubles' : '1 v 1';
+
+    const seats = Utils.seatsFor(count);
+    const cell = (seat) => {
+      const p = room.players[seat];
+      const team = Utils.teamOf(seat, count);
+      const color = Utils.colorOfTeam(team);
+      const mine = seat === mySeat;
+      const cls = ['seat', p && p.ready ? 'ready' : '', mine ? 'me' : ''].filter(Boolean).join(' ');
+      const name = p ? this._esc(p.name) + (mine ? ' (you)' : '') : 'Waiting…';
+      const status = p ? (p.ready ? 'Ready' : (p.connected ? 'Not ready' : 'Disconnected')) : 'Empty';
+      const initial = p ? this._esc((p.name[0] || '?').toUpperCase()) : '?';
+      return `<div class="${cls}">
+        <div class="avatar lg">${initial}</div>
+        <strong>${name}</strong>
+        <em class="tag ${color}">${color === 'white' ? 'White' : 'Black'}</em>
+        <span class="ready-pill">${status}</span>
+      </div>`;
+    };
+
+    if (count === 2) {
+      this.el.seatGrid.className = 'seats';
+      this.el.seatGrid.innerHTML = cell(0) + '<div class="vs">VS</div>' + cell(2);
+    } else {
+      // team 0 = seats {0,2}, team 1 = seats {1,3}
+      const team = (t) => `<div class="team-col">
+          <h4 class="team-head ${Utils.colorOfTeam(t)}">${t === 0 ? 'White' : 'Black'} Team</h4>
+          ${seats.filter(s => Utils.teamOf(s, count) === t).map(cell).join('')}
+        </div>`;
+      this.el.seatGrid.className = 'seats doubles';
+      this.el.seatGrid.innerHTML = team(0) + '<div class="vs">VS</div>' + team(1);
     }
 
     this.el.spectatorCount.textContent = room.spectators ? room.spectators + ' spectator(s) watching' : '';

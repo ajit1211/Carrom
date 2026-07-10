@@ -25,9 +25,11 @@
 
   ui.on('nav', async (to) => {
     if (to === 'practice') return game.start('practice');
-    if (to === 'local') return game.start('local');
+    if (to === 'local') return ui.askLocalFormat();       // 1v1 or 2v2 on this device
     if (to === 'online') return openOnline();
   });
+
+  ui.on('local-format', (count) => game.start('local', { playerCount: count }));
 
   ui.on('quit', () => {
     game.stop();
@@ -57,8 +59,12 @@
       return true;
     } catch (err) {
       ui.closeOverlay('connect');
-      ui.setConnected(false);
-      ui.toast(err.message || 'Could not reach the server', 'bad');
+      const why = err.message || 'Could not reach the server';
+      ui.setConnected(false, why);
+      // The static-host explanation is a paragraph; the pill toast is a line.
+      ui.toast(SocketClient.isStaticHost(location.hostname)
+        ? 'This host cannot run the multiplayer server'
+        : why, 'bad');
       return false;
     } finally {
       connecting = false;
@@ -67,19 +73,19 @@
 
   async function openOnline() {
     ui.show('online');
-    ui.setConnected(false);
+    ui.setConnected(false, 'Connecting…');
     await ensureConnected();
   }
 
   ui.on('cancel-connect', () => { net.disconnect(); connecting = false; });
 
-  ui.on('create-room', async () => {
+  ui.on('create-room', async ({ playerCount }) => {
     if (!(await ensureConnected())) return;
     try {
-      const res = await net.createRoom();
+      const res = await net.createRoom(playerCount);
       ui.setRoom(res.room, res.seat);
       ui.show('waiting');
-      ui.toast('Room ' + res.room.code + ' created', 'ok');
+      ui.toast('Room ' + res.room.code + ' created · ' + (playerCount === 4 ? '2 v 2' : '1 v 1'), 'ok');
     } catch (err) {
       ui.toast(err.message || 'Could not create the room', 'bad');
     }
@@ -122,7 +128,8 @@
     ui.clearChat();
     game.start('online', {
       seat: net.seat,
-      names: p.room.players.map((pl, i) => pl || { index: i, name: i === 0 ? 'White' : 'Black' }),
+      playerCount: p.room.playerCount,
+      names: p.room.players,
       state: p.state,
       world: p.world
     });
@@ -134,7 +141,7 @@
   net.on('rematch-status', (p) => {
     if (!p) return;
     if (p.restarting) { ui.setRematchStatus(''); return; }
-    ui.setRematchStatus(p.count + '/2 players want a rematch');
+    ui.setRematchStatus(p.count + '/' + (p.of || 2) + ' players want a rematch');
   });
 
   net.on('chat', (m) => {
@@ -155,7 +162,7 @@
    * ========================================================== */
 
   net.on('disconnected', (reason) => {
-    ui.setConnected(false);
+    ui.setConnected(false, 'Connection lost (' + (reason || 'unknown') + ').');
     if (game.mode === 'online' && game.running) {
       ui.setNetBadge({ text: '● reconnecting…', bad: true });
       ui.toast('Connection lost — reconnecting', 'bad');
@@ -171,7 +178,8 @@
     if (res.state && res.world && res.started) {
       game.start('online', {
         seat: res.seat,
-        names: res.room.players.map((pl, i) => pl || { index: i, name: i === 0 ? 'White' : 'Black' }),
+        playerCount: res.room.playerCount,
+        names: res.room.players,
         state: res.state,
         world: res.world
       });

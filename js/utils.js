@@ -109,6 +109,33 @@ var CONFIG = (function buildConfig() {
     MAX_TURNS: 200,            // safety valve -> draw (a real game ends in ~40)
     DEFAULT_TURN_TIME: 30,
 
+    /* --- Seats ---
+     * Singles uses seats 0 and 2 (facing each other). Doubles uses all four,
+     * turn order running clockwise, partners opposite:
+     *
+     *              seat 2  (Black)
+     *      seat 1                  seat 3
+     *      (White)                 (Black)
+     *              seat 0  (White)
+     *
+     * so team 0 = seats {0, 1}? No — partners must face each other:
+     * team 0 = {0, 2}, team 1 = {1, 3}, and play alternates between teams.
+     */
+    SEATS: 4,
+
+    /* --- Striker skins. `face` is the disc, `rim` the machined edge. --- */
+    STRIKER_COLORS: [
+      { id: 'pearl',  name: 'Pearl',   face: '#eef2f8', rim: '#8d97a8' },
+      { id: 'gold',   name: 'Gold',    face: '#ffd98a', rim: '#9c6f16' },
+      { id: 'ruby',   name: 'Ruby',    face: '#ff8b96', rim: '#8e1b26' },
+      { id: 'jade',   name: 'Jade',    face: '#8bf0c4', rim: '#14795a' },
+      { id: 'azure',  name: 'Azure',   face: '#93c8ff', rim: '#1b5590' },
+      { id: 'violet', name: 'Violet',  face: '#c9b1ff', rim: '#4a2f96' },
+      { id: 'ember',  name: 'Ember',   face: '#ffb37a', rim: '#9a4410' },
+      { id: 'onyx',   name: 'Onyx',    face: '#8e97a6', rim: '#171a20' }
+    ],
+    DEFAULT_STRIKER_COLOR: '#eef2f8',
+
     /* --- Colours --- */
     COLORS: {
       white: '#f2e7cd',
@@ -202,20 +229,107 @@ var Utils = {
     return out;
   },
 
-  /**
-   * Striker home position for a player.
-   * Player 0 sits at the bottom (shoots up), player 1 at the top.
-   */
-  strikerHome: function (playerIndex) {
-    var L = CONFIG.LAYOUT;
-    return playerIndex === 0
-      ? { x: CONFIG.CENTER, y: CONFIG.PLAY_MAX - L.STRIKER_OFFSET }
-      : { x: CONFIG.CENTER, y: CONFIG.PLAY_MIN + L.STRIKER_OFFSET };
+  /* ------------------------------------------------------------------
+   * Seats & rails.
+   *
+   * Four base lines, one per side. A striker position along a rail is a
+   * single scalar `u` (an x for the horizontal rails, a y for the vertical
+   * ones), always inside [STRIKER_MIN, STRIKER_MAX].
+   *
+   *   seat 0 = bottom   seat 1 = left   seat 2 = top   seat 3 = right
+   *
+   * `rot` is the angle the whole board is rotated by when that seat is the
+   * local player, so your own rail is always at the bottom of your screen.
+   * ------------------------------------------------------------------ */
+
+  railFor: function (seat) {
+    var L = CONFIG.LAYOUT, off = L.STRIKER_OFFSET;
+    switch (seat) {
+      case 1: return { horizontal: false, fixed: CONFIG.PLAY_MIN + off, inward: { x: 1, y: 0 },  rot: -Math.PI / 2 };
+      case 2: return { horizontal: true,  fixed: CONFIG.PLAY_MIN + off, inward: { x: 0, y: 1 },  rot: Math.PI };
+      case 3: return { horizontal: false, fixed: CONFIG.PLAY_MAX - off, inward: { x: -1, y: 0 }, rot: Math.PI / 2 };
+      default: return { horizontal: true, fixed: CONFIG.PLAY_MAX - off, inward: { x: 0, y: -1 }, rot: 0 };
+    }
   },
 
-  /** Clamp a striker x to the legal span of its base line. */
-  clampStrikerX: function (x) {
-    return Utils.clamp(x, CONFIG.LAYOUT.STRIKER_MIN, CONFIG.LAYOUT.STRIKER_MAX);
+  /** Clamp a rail coordinate to the legal span of the base line. */
+  clampStrikerU: function (u) {
+    return Utils.clamp(u, CONFIG.LAYOUT.STRIKER_MIN, CONFIG.LAYOUT.STRIKER_MAX);
+  },
+
+  /** Board-space point for a striker sitting at `u` on `seat`'s rail. */
+  strikerPos: function (seat, u) {
+    var r = Utils.railFor(seat);
+    u = Utils.clampStrikerU(u);
+    return r.horizontal ? { x: u, y: r.fixed } : { x: r.fixed, y: u };
+  },
+
+  /** Inverse of strikerPos: pull the rail coordinate out of a point. */
+  strikerU: function (seat, pos) {
+    return Utils.railFor(seat).horizontal ? pos.x : pos.y;
+  },
+
+  strikerHome: function (seat) { return Utils.strikerPos(seat, CONFIG.CENTER); },
+
+  /**
+   * Rail coordinate <-> slider position, oriented to what the player SEES.
+   * After the board is rotated for their seat, t=0 is always screen-left.
+   */
+  railTFromU: function (seat, u) {
+    var L = CONFIG.LAYOUT, span = L.STRIKER_MAX - L.STRIKER_MIN;
+    var n = (Utils.clampStrikerU(u) - L.STRIKER_MIN) / span;
+    return (seat === 0 || seat === 1) ? n : 1 - n;
+  },
+
+  uFromRailT: function (seat, t) {
+    var L = CONFIG.LAYOUT, span = L.STRIKER_MAX - L.STRIKER_MIN;
+    t = Utils.clamp(t, 0, 1);
+    var n = (seat === 0 || seat === 1) ? t : 1 - t;
+    return L.STRIKER_MIN + n * span;
+  },
+
+  /* ------------------------------------------------------------------
+   * Teams.
+   *
+   * Both formats seat the two sides facing each other, but they mean
+   * different things, so team membership depends on the headcount:
+   *
+   *   Singles (2): seats 0 (bottom) and 2 (top) are OPPONENTS.
+   *   Doubles (4): seats 0 and 2 are PARTNERS (team 0), 1 and 3 are the
+   *                other pair (team 1). Turn order 0->1->2->3 therefore
+   *                alternates between the teams, exactly as at a real board.
+   * ------------------------------------------------------------------ */
+
+  /** Which seats are in play for a given headcount. */
+  seatsFor: function (playerCount) {
+    return playerCount === 4 ? [0, 1, 2, 3] : [0, 2];
+  },
+
+  teamOf: function (seat, playerCount) {
+    return playerCount === 4 ? (seat % 2) : (seat === 0 ? 0 : 1);
+  },
+
+  colorOfTeam: function (team) { return team === 0 ? 'white' : 'black'; },
+
+  colorOfSeat: function (seat, playerCount) {
+    return Utils.colorOfTeam(Utils.teamOf(seat, playerCount));
+  },
+
+  /** Your partner's seat, or your own in singles. */
+  partnerOf: function (seat, playerCount) {
+    return playerCount === 4 ? (seat + 2) % 4 : seat;
+  },
+
+  /** Next seat to shoot, skipping the seats a singles game does not use. */
+  nextSeat: function (seat, playerCount) {
+    var seats = Utils.seatsFor(playerCount);
+    var i = seats.indexOf(seat);
+    return seats[(i + 1) % seats.length];
+  },
+
+  /** Look up a striker skin, falling back to a raw CSS colour string. */
+  strikerFace: function (color) {
+    return color || CONFIG.DEFAULT_STRIKER_COLOR;
   },
 
   /** Human-readable label for a coin type. */

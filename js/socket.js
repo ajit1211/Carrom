@@ -18,6 +18,16 @@ class SocketClient extends EventBus {
   static available() { return typeof window !== 'undefined' && typeof window.io === 'function'; }
 
   /**
+   * Hosts that serve static files only. Vercel and Netlify *do* run Node,
+   * but as short-lived serverless functions — they cannot hold a WebSocket
+   * open or keep room state in memory, so Socket.io can never live there.
+   * Pointing at their origin only yields a 404 on /socket.io/.
+   */
+  static isStaticHost(host) {
+    return /(^|\.)(github\.io|pages\.dev|vercel\.app|netlify\.app|netlify\.com|surge\.sh|neocities\.org)$/i.test(host || '');
+  }
+
+  /**
    * Where does the match server live?
    *  1. explicit Settings override
    *  2. CONFIG.NET.PUBLIC_SERVER (baked in at build time)
@@ -28,9 +38,18 @@ class SocketClient extends EventBus {
     if (s.serverUrl) return s.serverUrl;
     if (CONFIG.NET.PUBLIC_SERVER) return CONFIG.NET.PUBLIC_SERVER;
     if (location.protocol === 'file:') return '';
-    // A static host (GitHub Pages) cannot possibly be the game server.
-    if (/github\.io$/i.test(location.hostname) || /pages\.dev$/i.test(location.hostname)) return '';
+    if (SocketClient.isStaticHost(location.hostname)) return '';
     return location.origin;
+  }
+
+  /** Why can't we connect? Phrased for a player, not a developer. */
+  static explainNoServer() {
+    if (SocketClient.isStaticHost(location.hostname)) {
+      return location.hostname.split('.').slice(-2).join('.') +
+        ' only hosts static files, so it cannot run the multiplayer server. ' +
+        'Deploy the server (e.g. on Render) and paste its URL into Settings → Multiplayer Server URL.';
+    }
+    return 'No server URL. Set one in Settings → Multiplayer Server URL.';
   }
 
   /** @returns {Promise<void>} resolves on connect, rejects on timeout */
@@ -42,7 +61,7 @@ class SocketClient extends EventBus {
 
     this.url = SocketClient.resolveUrl();
     if (!this.url) {
-      return Promise.reject(new Error('No server URL. Set one in Settings → Multiplayer Server URL.'));
+      return Promise.reject(new Error(SocketClient.explainNoServer()));
     }
 
     return new Promise((resolve, reject) => {
@@ -50,21 +69,29 @@ class SocketClient extends EventBus {
 
       this.socket = window.io(this.url, {
         transports: ['websocket', 'polling'],
-        reconnection: true,
-        reconnectionAttempts: 8,
-        reconnectionDelay: 800,
-        reconnectionDelayMax: 4000,
+        // Retrying only makes sense once we know a server is actually there.
+        // Without this, a missing server floods the console with eight
+        // identical handshake failures before we ever surface the error.
+        reconnection: false,
         timeout: timeoutMs
       });
 
       const fail = (err) => {
         if (done) return;
         done = true;
+        this.disconnect();
         reject(err instanceof Error ? err : new Error(String(err && err.message || err)));
       };
 
       this.socket.on('connect', () => {
         this.connected = true;
+
+        // A server exists. From now on, survive drops.
+        this.socket.io.reconnection(true);
+        this.socket.io.reconnectionAttempts(8);
+        this.socket.io.reconnectionDelay(800);
+        this.socket.io.reconnectionDelayMax(4000);
+
         this._startPing();
         this.emit('connected');
         if (!done) { done = true; resolve(); }

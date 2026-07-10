@@ -80,6 +80,18 @@
           <input type="text" id="setName" maxlength="14" placeholder="Player" />
         </label>
 
+        <div class="row col">
+          <span>Striker Colour</span>
+          <div class="swatches" id="strikerSwatches"></div>
+          <label class="custom-color">
+            <span class="muted">Custom</span>
+            <input type="color" id="setStrikerCustom" value="#eef2f8" />
+            <span class="striker-preview" id="strikerPreview" aria-hidden="true"></span>
+          </label>
+        </div>
+
+        <hr />
+
         <label class="row">
           <span>Music</span>
           <input type="checkbox" id="setMusic" class="switch" />
@@ -161,14 +173,20 @@
       <div class="sheet-body prose">
         <h3>Controls</h3>
         <ul>
-          <li><b>Position:</b> use the <b>slider</b> under the board, or grab the striker and slide it <i>sideways</i> along your base line.</li>
-          <li><b>Aim &amp; Power:</b> grab the striker and pull it <i>backwards</i> — slingshot style. An arrow locks on to the coin you are lined up with, and the further you pull, the longer and hotter the arrow gets. You can also press anywhere on the board and drag back.</li>
+          <li><b>Position:</b> use the <b>slider</b> under the board (or <kbd>←</kbd>/<kbd>→</kbd>) to slide the striker along your base line.</li>
+          <li><b>Aim &amp; Power:</b> press <i>anywhere</i> and drag away from the striker — slingshot style, through a full 360°. Pull from below, the side, even from in front; the striker always fires the opposite way. An arrow locks on to the coin you are lined up with, and the further you pull, the longer and hotter it gets.</li>
           <li><b>Shoot:</b> release. Press <kbd>Esc</kbd> while dragging to cancel.</li>
           <li><b>Keyboard:</b> <kbd>←</kbd>/<kbd>→</kbd> nudge striker, <kbd>Space</kbd> charge &amp; release, <kbd>P</kbd> pause, <kbd>F3</kbd> debug.</li>
         </ul>
 
         <h3>Objective</h3>
-        <p>Pocket all nine of your coins. White plays white, Black plays black. The Queen (red) is worth 3 points but must be <b>covered</b>.</p>
+        <p>Pocket all nine of your team's coins. White plays white, Black plays black. The Queen (red) is worth 3 points but must be <b>covered</b>.</p>
+
+        <h3>Formats</h3>
+        <ul>
+          <li><b>1 v 1:</b> two players facing each other across the board.</li>
+          <li><b>2 v 2 (Doubles):</b> four players, <b>partners sit opposite</b> each other. Turns run clockwise, so the sides always alternate. Coins, fouls, debts, the Queen and the win all belong to the <b>team</b> — your partner's pocket counts as yours, and either of you can cover the Queen the other pocketed. An extra turn is kept by the player who earned it.</li>
+        </ul>
 
         <h3>Rules implemented</h3>
         <ul>
@@ -212,12 +230,16 @@
         <div class="lobby-grid">
           <div class="lobby-card">
             <h3>🎲 Create Room</h3>
-            <p class="muted">Get a code, send it to a friend.</p>
+            <p class="muted">Pick a format, get a code, send it to a friend.</p>
+            <div class="segmented" id="formatSeg" role="group" aria-label="Match format">
+              <button type="button" data-count="2" class="on">1 v 1</button>
+              <button type="button" data-count="4">2 v 2 <small>Doubles</small></button>
+            </div>
             <button class="btn primary block" id="btnCreateRoom">Create Room</button>
           </div>
           <div class="lobby-card">
             <h3>🔑 Join Room</h3>
-            <p class="muted">Enter the 5-character code.</p>
+            <p class="muted">Enter the 5-character code. The format is set by the host.</p>
             <input type="text" id="joinCode" maxlength="5" placeholder="ABC12" class="code-input" />
             <button class="btn block" id="btnJoinRoom">Join</button>
           </div>
@@ -249,11 +271,8 @@
           </div>
         </div>
 
-        <div class="seats">
-          <div class="seat" id="seat0"><div class="avatar lg">?</div><strong>Waiting…</strong><em class="tag white">White</em><span class="ready-pill">Not ready</span></div>
-          <div class="vs">VS</div>
-          <div class="seat" id="seat1"><div class="avatar lg">?</div><strong>Waiting…</strong><em class="tag black">Black</em><span class="ready-pill">Not ready</span></div>
-        </div>
+        <p class="format-badge" id="formatBadge">1 v 1</p>
+        <div class="seats" id="seatGrid"></div>
 
         <p class="muted center" id="spectatorCount"></p>
         <button class="btn primary block" id="btnReady">I'm Ready</button>
@@ -264,11 +283,16 @@
   <!-- ══════════════════ GAME ══════════════════ -->
   <section id="screen-game" class="screen game">
     <div class="hud-top glass">
-      <div class="player-card" id="pcard0">
+      <div class="team-card" id="pcard0">
         <div class="avatar sm" id="pavatar0">1</div>
         <div class="pc-meta">
           <strong id="pname0">Player 1</strong>
-          <div class="coin-row"><span class="pip white"></span><span id="pscore0">0</span>/9 <em id="pqueen0" class="queen-badge" hidden>♛</em></div>
+          <div class="coin-row">
+            <span class="pip white"></span>
+            <span class="tally"><b id="pscore0">0</b>/9</span>
+            <em id="pqueen0" class="queen-badge" hidden>♛</em>
+          </div>
+          <div class="coin-bar"><i id="pbar0" style="width:0%"></i></div>
         </div>
       </div>
 
@@ -280,10 +304,15 @@
         <div class="turn-indicator" id="turnIndicator">Your turn</div>
       </div>
 
-      <div class="player-card right" id="pcard1">
+      <div class="team-card right" id="pcard1">
         <div class="pc-meta">
           <strong id="pname1">Player 2</strong>
-          <div class="coin-row"><em id="pqueen1" class="queen-badge" hidden>♛</em> <span id="pscore1">0</span>/9 <span class="pip black"></span></div>
+          <div class="coin-row">
+            <em id="pqueen1" class="queen-badge" hidden>♛</em>
+            <span class="tally"><b id="pscore1">0</b>/9</span>
+            <span class="pip black"></span>
+          </div>
+          <div class="coin-bar"><i id="pbar1" style="width:0%"></i></div>
         </div>
         <div class="avatar sm" id="pavatar1">2</div>
       </div>
@@ -330,6 +359,16 @@
   </section>
 
   <!-- ══════════════════ OVERLAYS ══════════════════ -->
+  <div class="overlay" id="overlay-format">
+    <div class="dialog glass">
+      <h2 id="formatTitle">Play Offline</h2>
+      <p class="muted">How many players on this device?</p>
+      <button class="btn primary block" data-local="2">1 v 1<small>Two players, facing each other</small></button>
+      <button class="btn block" data-local="4">2 v 2 — Doubles<small>Four players, partners opposite</small></button>
+      <button class="btn ghost block" id="btnFormatCancel">Cancel</button>
+    </div>
+  </div>
+
   <div class="overlay" id="overlay-pause">
     <div class="dialog glass">
       <h2>Paused</h2>

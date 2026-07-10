@@ -15,6 +15,16 @@ var Striker = class Striker extends Coin {
     this.m = CONFIG.STRIKER_MASS;
     this.invM = 1 / this.m;
     this.grain = 0;
+
+    /** Purely cosmetic. Never touched by the solver, so it cannot desync. */
+    this.face = CONFIG.DEFAULT_STRIKER_COLOR;
+    this.rim = '#8d97a8';
+  }
+
+  /** @param {{face:string, rim:string}|null} skin */
+  setSkin(skin) {
+    this.face = (skin && skin.face) || CONFIG.DEFAULT_STRIKER_COLOR;
+    this.rim = (skin && skin.rim) || '#8d97a8';
   }
 
   draw(ctx, opts) {
@@ -42,22 +52,22 @@ var Striker = class Striker extends Coin {
 
     ctx.rotate(this.angle);
 
-    // chromed rim
+    // machined rim, lit from the top-left
     const rim = ctx.createLinearGradient(-r, -r, r, r);
-    rim.addColorStop(0, '#ffffff');
-    rim.addColorStop(0.35, '#9aa5b6');
-    rim.addColorStop(0.7, '#5c6572');
-    rim.addColorStop(1, '#cfd8e4');
+    rim.addColorStop(0, this._lighten(this.rim, 0.75));
+    rim.addColorStop(0.35, this.rim);
+    rim.addColorStop(0.7, this._darken(this.rim, 0.42));
+    rim.addColorStop(1, this._lighten(this.rim, 0.4));
     ctx.fillStyle = rim;
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.fill();
 
-    // pearly face
+    // lacquered face, tinted to the player's chosen colour
     const g = ctx.createRadialGradient(-r * 0.35, -r * 0.4, r * 0.05, 0, 0, r);
-    g.addColorStop(0, '#ffffff');
-    g.addColorStop(0.5, '#eaeff7');
-    g.addColorStop(1, '#b9c2cf');
+    g.addColorStop(0, this._lighten(this.face, 0.55));
+    g.addColorStop(0.5, this.face);
+    g.addColorStop(1, this._darken(this.face, 0.24));
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(0, 0, r * 0.87, 0, Math.PI * 2);
@@ -65,7 +75,7 @@ var Striker = class Striker extends Coin {
 
     if (q !== 'low') {
       // machined rings
-      ctx.strokeStyle = 'rgba(60,72,90,.20)';
+      ctx.strokeStyle = 'rgba(20,26,36,.20)';
       ctx.lineWidth = 0.9;
       for (let i = 1; i <= 3; i++) {
         ctx.beginPath();
@@ -73,7 +83,7 @@ var Striker = class Striker extends Coin {
         ctx.stroke();
       }
       // centre dimple
-      ctx.fillStyle = 'rgba(80,92,110,.35)';
+      ctx.fillStyle = 'rgba(20,26,36,.30)';
       ctx.beginPath();
       ctx.arc(0, 0, r * 0.11, 0, Math.PI * 2);
       ctx.fill();

@@ -358,35 +358,38 @@ var World = class World {
     coin.place(spot.x, spot.y);
   }
 
-  /** Park the striker on a base line without letting it overlap a coin. */
-  resetStriker(playerIndex, x) {
+  /**
+   * Park the striker on a seat's base line without letting it overlap a coin.
+   * @param {number} seat 0=bottom 1=left 2=top 3=right
+   * @param {number} [u]  position along that rail; defaults to its centre
+   */
+  resetStriker(seat, u) {
     const s = this.striker;
-    const home = Utils.strikerHome(playerIndex);
-    let px = Utils.clampStrikerX(typeof x === 'number' ? x : home.x);
+    let pu = Utils.clampStrikerU(typeof u === 'number' ? u : CONFIG.CENTER);
 
-    // If a coin is sitting on the base line, slide sideways until clear.
-    const blocked = (tx) => this.coins.some(c =>
-      c.active && !c.potted && Utils.dist2(tx, home.y, c.x, c.y) < (s.r + c.r) * (s.r + c.r));
-
-    if (blocked(px)) {
+    // If a coin is sitting on the base line, slide along it until clear.
+    if (this.strikerBlockedAt(pu, seat)) {
       for (let off = 4; off <= CONFIG.PLAY; off += 4) {
-        if (!blocked(Utils.clampStrikerX(px - off))) { px = Utils.clampStrikerX(px - off); break; }
-        if (!blocked(Utils.clampStrikerX(px + off))) { px = Utils.clampStrikerX(px + off); break; }
+        const lo = Utils.clampStrikerU(pu - off);
+        const hi = Utils.clampStrikerU(pu + off);
+        if (!this.strikerBlockedAt(lo, seat)) { pu = lo; break; }
+        if (!this.strikerBlockedAt(hi, seat)) { pu = hi; break; }
       }
     }
 
+    const p = Utils.strikerPos(seat, pu);
     s.potted = false;
     s.active = true;
-    s.place(px, home.y);
+    s.place(p.x, p.y);
     s.angle = 0;
   }
 
-  /** Would the striker overlap a live coin at this x? (UI feedback) */
-  strikerBlockedAt(x, playerIndex) {
-    const home = Utils.strikerHome(playerIndex);
+  /** Would the striker overlap a live coin at rail position `u`? */
+  strikerBlockedAt(u, seat) {
+    const p = Utils.strikerPos(seat, u);
     const s = this.striker;
     return this.coins.some(c => c.active && !c.potted &&
-      Utils.dist2(x, home.y, c.x, c.y) < (s.r + c.r) * (s.r + c.r));
+      Utils.dist2(p.x, p.y, c.x, c.y) < (s.r + c.r) * (s.r + c.r));
   }
 
   /* ---------------- aim prediction (pure geometry, no side effects) ---------------- */

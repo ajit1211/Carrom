@@ -5,30 +5,58 @@
 
 var Player = class Player {
   /**
-   * @param {number} index 0 (bottom, white) or 1 (top, black)
-   * @param {object} o {name, id, local, spectator}
+   * @param {number} index seat: 0 bottom, 1 left, 2 top, 3 right
+   * @param {object} o {name, id, local, strikerColor, playerCount}
    */
   constructor(index, o = {}) {
     this.index = index;
-    this.name = o.name || (index === 0 ? 'Player 1' : 'Player 2');
+    this.name = o.name || ('Player ' + (index + 1));
     this.id = o.id || null;          // socket-level player token, online only
     this.local = o.local !== false;  // can this seat be driven by this device?
     this.ready = false;
     this.connected = true;
-    this.color = index === 0 ? 'white' : 'black';
+    this.strikerColor = o.strikerColor || CONFIG.DEFAULT_STRIKER_COLOR;
+
+    const count = o.playerCount || 2;
+    this.team = Utils.teamOf(index, count);
+    this.color = Utils.colorOfTeam(this.team);
   }
 
   get initial() { return (this.name || '?').trim().charAt(0).toUpperCase() || '?'; }
 
-  serialize() {
-    return { index: this.index, name: this.name, id: this.id, ready: this.ready, connected: this.connected, color: this.color };
+  /** Face + rim for the striker. A custom colour derives its own rim. */
+  get skin() { return Player.skinFor(this.strikerColor); }
+
+  static skinFor(face) {
+    const preset = CONFIG.STRIKER_COLORS.find(c => c.face.toLowerCase() === String(face).toLowerCase());
+    if (preset) return { face: preset.face, rim: preset.rim };
+    return { face: face || CONFIG.DEFAULT_STRIKER_COLOR, rim: Player._darken(face, 0.45) };
   }
 
-  static from(o) {
-    const p = new Player(o.index, { name: o.name, id: o.id, local: false });
+  static _darken(hex, t) {
+    if (!/^#[0-9a-f]{6}$/i.test(hex || '')) return '#8d97a8';
+    const n = parseInt(hex.slice(1), 16);
+    const r = Math.round(((n >> 16) & 255) * (1 - t));
+    const g = Math.round(((n >> 8) & 255) * (1 - t));
+    const b = Math.round((n & 255) * (1 - t));
+    return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+  }
+
+  serialize() {
+    return {
+      index: this.index, name: this.name, id: this.id, ready: this.ready,
+      connected: this.connected, color: this.color, team: this.team,
+      strikerColor: this.strikerColor
+    };
+  }
+
+  static from(o, playerCount) {
+    const p = new Player(o.index, {
+      name: o.name, id: o.id, local: false,
+      strikerColor: o.strikerColor, playerCount: playerCount || 2
+    });
     p.ready = !!o.ready;
     p.connected = o.connected !== false;
-    p.color = o.color || p.color;
     return p;
   }
 };
@@ -48,6 +76,7 @@ var Profile = {
       draws: 0,
       coinsPocketed: 0,
       queens: 0,
+      strikerColor: CONFIG.DEFAULT_STRIKER_COLOR,
       playerId: Utils.uid(12)      // stable across reconnects
     }, p || {});
   },
@@ -71,7 +100,10 @@ var Profile = {
 
   reset() {
     const p = Profile.load();
-    return Profile.save({ name: p.name, wins: 0, losses: 0, draws: 0, coinsPocketed: 0, queens: 0, playerId: p.playerId });
+    return Profile.save({
+      name: p.name, wins: 0, losses: 0, draws: 0, coinsPocketed: 0, queens: 0,
+      strikerColor: p.strikerColor, playerId: p.playerId
+    });
   }
 };
 
