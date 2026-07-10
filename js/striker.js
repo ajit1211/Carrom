@@ -139,6 +139,9 @@ var Aim = class Aim {
 
   move(px, py) { this.pointerX = px; this.pointerY = py; }
 
+  /** The origin follows the striker while it is being repositioned. */
+  setOrigin(ox, oy) { this.originX = ox; this.originY = oy; }
+
   cancel() { this.active = false; }
 
   /** Vector from the pointer back to the striker == the shot direction. */
@@ -148,11 +151,25 @@ var Aim = class Aim {
 
   get angle() { return Math.atan2(this.dy, this.dx); }
 
-  /** 0..1, capped at CONFIG.MAX_PULL logical pixels of drag. */
-  get power() { return Utils.clamp(this.pull / CONFIG.MAX_PULL, 0, 1); }
+  /**
+   * Pointer is close enough to the striker that there is no shot to speak of.
+   * The controller turns this into "slide the striker along its rail", so a
+   * player can wind back to 0% to re-place the disc without lifting a finger.
+   */
+  get inDeadzone() { return this.pull <= CONFIG.AIM_DEADZONE; }
 
-  /** Below this, releasing does nothing (protects against stray taps). */
-  get valid() { return this.pull > 14; }
+  /**
+   * 0..1. Stays at exactly 0 through the whole deadzone, then ramps to full
+   * power at CONFIG.MAX_PULL — so "0%" is a region you can aim for, not a
+   * single pixel.
+   */
+  get power() {
+    const span = CONFIG.MAX_PULL - CONFIG.AIM_DEADZONE;
+    return Utils.clamp((this.pull - CONFIG.AIM_DEADZONE) / span, 0, 1);
+  }
+
+  /** Releasing inside the deadzone never fires: it is the cancel gesture. */
+  get valid() { return !this.inDeadzone; }
 
   get dir() {
     const l = this.pull || 1;

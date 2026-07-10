@@ -271,11 +271,32 @@ class Game extends EventBus {
     this.aim.begin(s.x, s.y, p.x, p.y);
   }
 
+  /**
+   * One continuous gesture, two states:
+   *
+   *   pull <= AIM_DEADZONE  ->  0%. The striker follows your finger along its
+   *                             rail, so you can re-place it and change the
+   *                             line of the shot without lifting up.
+   *   pull >  AIM_DEADZONE  ->  aiming. Power ramps with the pull.
+   *
+   * Wind all the way back to 0% and the shot is effectively cancelled;
+   * release there and nothing fires.
+   */
   _onMove(e) {
     if (this.drag !== 'aim') return;
     const p = this._toBoard(e.clientX, e.clientY);
     this.pointer = p;
     this.aim.move(p.x, p.y);
+
+    if (this.aim.inDeadzone) {
+      // Reposition, then keep the slingshot anchored to the disc's new home.
+      if (!this._placeStriker(this._projectToRail(p))) this.ui.flashStrikerBlocked();
+      const s = this.world.striker;
+      this.aim.setOrigin(s.x, s.y);
+      this.ui.setPower(0, true);
+      return;
+    }
+
     this.ui.setPower(this.aim.power, true);
     if (this.settings.sound) audio.charge(this.aim.power);
   }
@@ -284,6 +305,11 @@ class Game extends EventBus {
     if (this.drag !== 'aim') return;
     if (this.aim.valid) this._fire(this.aim.angle, this.aim.power);
     this._cancelDrag();
+  }
+
+  /** Nearest point on the shooter's rail to an arbitrary board position. */
+  _projectToRail(p) {
+    return Utils.railFor(this.shooter).horizontal ? p.x : p.y;
   }
 
   _cancelDrag() {
@@ -746,6 +772,12 @@ class Game extends EventBus {
     const power = this.aim.power;
     const col = this._powerColor(power);
 
+    /* ---------- 0%: repositioning, not aiming ---------- */
+    if (this.aim.inDeadzone) {
+      this._drawRepositionHint(ctx, s);
+      return;
+    }
+
     /* ---------- 1. the pull-back: rubber band + ghost striker ---------- */
     ctx.save();
     ctx.lineCap = 'round';
@@ -827,6 +859,58 @@ class Game extends EventBus {
 
   _powerColor(p) {
     return p < 0.4 ? '#35d39a' : (p < 0.75 ? '#f0b429' : '#ff5d6c');
+  }
+
+  /**
+   * Shown while the pull is inside the deadzone: the striker's rail lights up
+   * with left/right chevrons, making it obvious the shot is at 0% and the
+   * disc is being re-placed rather than aimed.
+   */
+  _drawRepositionHint(ctx, s) {
+    const L = CONFIG.LAYOUT;
+    const a = Utils.strikerPos(this.shooter, L.STRIKER_MIN);
+    const b = Utils.strikerPos(this.shooter, L.STRIKER_MAX);
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,.5)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 6]);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // ring on the striker
+    ctx.strokeStyle = '#35d39a';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r + 5, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // chevrons either side, along the rail
+    const r = Utils.railFor(this.shooter);
+    const ax = r.horizontal ? 1 : 0, ay = r.horizontal ? 0 : 1;   // rail axis
+    ctx.fillStyle = '#35d39a';
+    for (const s2 of [-1, 1]) {
+      const cx = s.x + ax * s2 * (s.r + 16);
+      const cy = s.y + ay * s2 * (s.r + 16);
+      ctx.beginPath();
+      ctx.moveTo(cx + ax * s2 * 6, cy + ay * s2 * 6);
+      ctx.lineTo(cx - ax * s2 * 4 - ay * 6, cy - ay * s2 * 4 - ax * 6);
+      ctx.lineTo(cx - ax * s2 * 4 + ay * 6, cy - ay * s2 * 4 + ax * 6);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // "0%" label, kept upright
+    this._upright(ctx, s.x - ay * (s.r + 34), s.y - ax * (s.r + 34));
+    ctx.font = '700 15px Outfit, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#35d39a';
+    ctx.fillText('MOVE', 0, 0);
+    ctx.restore();
   }
 
   /** A tapered arrow shaft with a solid head, from (x1,y1) to (x2,y2). */

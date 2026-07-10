@@ -79,6 +79,11 @@ var CONFIG = (function buildConfig() {
     MAX_SHOT_SPEED: 3200,
     MAX_PULL: 190,             // logical px of drag == full power
 
+    /* Pull less than this and the shot reads 0%: the drag becomes a
+     * "reposition the striker" gesture instead. Releasing inside the
+     * deadzone never fires, so it doubles as a cancel. */
+    AIM_DEADZONE: 22,
+
     /* --- Board markings --- */
     LAYOUT: {
       INSET: INSET,
