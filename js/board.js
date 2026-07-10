@@ -3,20 +3,39 @@
  * and blits it every frame. Everything (grain, pockets, markings)
  * is generated procedurally: the project ships zero image assets,
  * so nothing can 404 on GitHub Pages and no artwork is borrowed.
+ *
+ * The board is themeable: CONFIG.BOARD_THEMES lists the palettes,
+ * the player picks one in Settings, and setTheme() rebuilds the
+ * cached texture. Purely cosmetic — physics never reads a theme.
  * ============================================================ */
 'use strict';
 
 var Board = class Board {
-  /** @param {'low'|'medium'|'high'} quality */
-  constructor(quality = 'high') {
+  /**
+   * @param {'low'|'medium'|'high'} quality
+   * @param {string} [themeId] one of CONFIG.BOARD_THEMES ids
+   */
+  constructor(quality = 'high', themeId) {
     this.quality = quality;
     this.canvas = null;
     this.dirty = true;
+    this.theme = Board.themeById(themeId);
+  }
+
+  static themeById(id) {
+    return CONFIG.BOARD_THEMES.find(t => t.id === id) || CONFIG.BOARD_THEMES[0];
   }
 
   setQuality(q) {
     if (q === this.quality) return;
     this.quality = q;
+    this.dirty = true;
+  }
+
+  setTheme(id) {
+    const t = Board.themeById(id);
+    if (t === this.theme) return;
+    this.theme = t;
     this.dirty = true;
   }
 
@@ -36,6 +55,7 @@ var Board = class Board {
     const c = cv.getContext('2d');
 
     this._frame(c);
+    this._corners(c);
     this._playfield(c);
     this._markings(c);
     this._pockets(c);
@@ -45,31 +65,87 @@ var Board = class Board {
     this.dirty = false;
   }
 
-  /* Outer wooden frame. */
+  /* Outer lacquered frame. */
   _frame(c) {
     const S = CONFIG.BOARD_SIZE;
+    const T = this.theme;
 
     const g = c.createLinearGradient(0, 0, S, S);
-    g.addColorStop(0, '#7a4d1c');
-    g.addColorStop(0.35, '#5d3712');
-    g.addColorStop(0.7, '#4a2b0d');
-    g.addColorStop(1, '#6b431a');
+    g.addColorStop(0, T.frame[0]);
+    g.addColorStop(0.35, T.frame[1]);
+    g.addColorStop(0.7, T.frame[2]);
+    g.addColorStop(1, T.frame[3]);
     c.fillStyle = g;
-    this._roundRect(c, 0, 0, S, S, 16);
+    this._roundRect(c, 0, 0, S, S, 20);
     c.fill();
 
-    this._grain(c, 0, 0, S, S, '#2b1806', this.quality === 'high' ? 220 : 90, 0.10);
+    this._grain(c, 0, 0, S, S, '#2b1806', this.quality === 'high' ? 220 : 90, 0.08);
 
-    // bevel highlight around the outside
-    c.strokeStyle = 'rgba(255, 210, 150, .18)';
+    // twin bevel: bright highlight outside, dark groove just inside —
+    // reads as a thick lacquered edge like a tournament frame
+    c.strokeStyle = T.frameEdge;
     c.lineWidth = 3;
-    this._roundRect(c, 1.5, 1.5, S - 3, S - 3, 15);
+    this._roundRect(c, 1.5, 1.5, S - 3, S - 3, 19);
     c.stroke();
+
+    c.strokeStyle = 'rgba(0,0,0,.35)';
+    c.lineWidth = 2;
+    this._roundRect(c, 7, 7, S - 14, S - 14, 15);
+    c.stroke();
+
+    // brass screws along the frame mid-line, like a real board
+    if (this.quality !== 'low') {
+      const m = CONFIG.FRAME / 2;
+      const spots = [
+        [S / 2, m], [S / 2, S - m], [m, S / 2], [S - m, S / 2]
+      ];
+      for (const [x, y] of spots) {
+        const sg = c.createRadialGradient(x - 1, y - 1, 0.5, x, y, 4);
+        sg.addColorStop(0, '#ffe9ac');
+        sg.addColorStop(0.6, '#b8862f');
+        sg.addColorStop(1, '#5f430f');
+        c.fillStyle = sg;
+        c.beginPath();
+        c.arc(x, y, 3.4, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+  }
+
+  /* Black rounded corner plates on the frame (as on club boards). */
+  _corners(c) {
+    const S = CONFIG.BOARD_SIZE;
+    const T = this.theme;
+    const R = CONFIG.FRAME + 26;
+
+    c.save();
+    this._roundRect(c, 0, 0, S, S, 20);
+    c.clip();
+
+    for (const [x, y] of [[0, 0], [S, 0], [0, S], [S, S]]) {
+      const g = c.createRadialGradient(x, y, R * 0.3, x, y, R);
+      g.addColorStop(0, this._shade(T.corner, 26));
+      g.addColorStop(0.75, T.corner);
+      g.addColorStop(1, this._shade(T.corner, -14));
+      c.fillStyle = g;
+      c.beginPath();
+      c.arc(x, y, R, 0, Math.PI * 2);
+      c.fill();
+
+      // thin gold trim on the plate's arc
+      c.strokeStyle = 'rgba(255,215,140,.28)';
+      c.lineWidth = 2;
+      c.beginPath();
+      c.arc(x, y, R - 2, 0, Math.PI * 2);
+      c.stroke();
+    }
+    c.restore();
   }
 
   /* Inner playing bed. */
   _playfield(c) {
     const a = CONFIG.PLAY_MIN, s = CONFIG.PLAY;
+    const T = this.theme;
 
     // recessed shadow where the bed meets the frame
     c.save();
@@ -80,17 +156,17 @@ var Board = class Board {
     c.restore();
 
     const g = c.createLinearGradient(a, a, a + s, a + s);
-    g.addColorStop(0, '#e8c98f');
-    g.addColorStop(0.3, '#dcb877');
-    g.addColorStop(0.62, '#d0a862');
-    g.addColorStop(1, '#e2c084');
+    g.addColorStop(0, T.bed[0]);
+    g.addColorStop(0.3, T.bed[1]);
+    g.addColorStop(0.62, T.bed[2]);
+    g.addColorStop(1, T.bed[3]);
     c.fillStyle = g;
     c.fillRect(a, a, s, s);
 
-    this._grain(c, a, a, s, s, '#8a5f28', this.quality === 'low' ? 60 : 200, 0.055);
+    this._grain(c, a, a, s, s, T.grain, this.quality === 'low' ? 60 : 200, 0.05);
 
     // ply edge
-    c.strokeStyle = 'rgba(60,32,8,.55)';
+    c.strokeStyle = 'rgba(40,22,6,.55)';
     c.lineWidth = 2;
     c.strokeRect(a - 1, a - 1, s + 2, s + 2);
   }
@@ -130,16 +206,17 @@ var Board = class Board {
   _markings(c) {
     const L = CONFIG.LAYOUT;
     const CEN = CONFIG.CENTER;
-    const OUT_A = CONFIG.PLAY_MIN + L.INSET;      // 193
-    const IN_A = OUT_A + L.GAP;                   // 206
-    const OUT_B = CONFIG.PLAY_MAX - L.INSET;      // 707
-    const IN_B = OUT_B - L.GAP;                   // 694
+    const T = this.theme;
+    const OUT_A = CONFIG.PLAY_MIN + L.INSET;
+    const IN_A = OUT_A + L.GAP;
+    const OUT_B = CONFIG.PLAY_MAX - L.INSET;
+    const IN_B = OUT_B - L.GAP;
 
     c.save();
     c.lineCap = 'round';
 
     /* --- the two-line base rails on all four sides --- */
-    c.strokeStyle = 'rgba(30,20,10,.72)';
+    c.strokeStyle = T.line;
     c.lineWidth = 2.4;
     const rail = (x1, y1, x2, y2) => { c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke(); };
 
@@ -153,7 +230,7 @@ var Board = class Board {
     for (const [x, y] of corners) {
       c.beginPath();
       c.arc(x, y, L.BASE_CIRCLE_R, 0, Math.PI * 2);
-      c.fillStyle = '#b5202c';
+      c.fillStyle = T.accent;
       c.fill();
       c.lineWidth = 1.6;
       c.strokeStyle = 'rgba(40,10,10,.75)';
@@ -161,7 +238,7 @@ var Board = class Board {
       // a bright dot in the middle, as on a real board
       c.beginPath();
       c.arc(x, y, L.BASE_CIRCLE_R * 0.32, 0, Math.PI * 2);
-      c.fillStyle = 'rgba(255,220,220,.75)';
+      c.fillStyle = T.accentDot;
       c.fill();
     }
 
@@ -173,7 +250,7 @@ var Board = class Board {
       const start = L.BASE_CIRCLE_R + 6;
       const end = len - L.CENTER_CIRCLE_R - 6;
 
-      c.strokeStyle = 'rgba(30,20,10,.62)';
+      c.strokeStyle = T.line;
       c.lineWidth = 2;
       c.beginPath();
       c.moveTo(x + ux * start, y + uy * start);
@@ -188,19 +265,19 @@ var Board = class Board {
       c.lineTo(hx - Math.cos(a - w) * hl, hy - Math.sin(a - w) * hl);
       c.lineTo(hx - Math.cos(a + w) * hl, hy - Math.sin(a + w) * hl);
       c.closePath();
-      c.fillStyle = 'rgba(30,20,10,.62)';
+      c.fillStyle = T.line;
       c.fill();
     }
 
     /* --- centre rosette --- */
     c.beginPath();
     c.arc(CEN, CEN, L.CENTER_CIRCLE_R, 0, Math.PI * 2);
-    c.strokeStyle = 'rgba(30,20,10,.68)';
+    c.strokeStyle = T.line;
     c.lineWidth = 2.2;
     c.stroke();
 
     // 8 petals
-    c.strokeStyle = 'rgba(30,20,10,.36)';
+    c.strokeStyle = this._fade(T.line, 0.5);
     c.lineWidth = 1.4;
     const pr = L.CENTER_CIRCLE_R * 0.62;
     for (let i = 0; i < 8; i++) {
@@ -213,23 +290,26 @@ var Board = class Board {
     // inner ring + red heart
     c.beginPath();
     c.arc(CEN, CEN, L.INNER_CIRCLE_R + 6, 0, Math.PI * 2);
-    c.strokeStyle = 'rgba(30,20,10,.55)';
+    c.strokeStyle = this._fade(T.line, 0.78);
     c.lineWidth = 1.6;
     c.stroke();
 
     c.beginPath();
     c.arc(CEN, CEN, L.INNER_CIRCLE_R, 0, Math.PI * 2);
-    c.fillStyle = 'rgba(181,32,44,.20)';
+    c.fillStyle = T.centerFill;
     c.fill();
-    c.strokeStyle = 'rgba(181,32,44,.6)';
+    c.strokeStyle = T.accent;
+    c.globalAlpha = 0.6;
     c.lineWidth = 1.4;
     c.stroke();
+    c.globalAlpha = 1;
 
     c.restore();
   }
 
-  /* Four corner pockets: hole, lip, brass ring. */
+  /* Four corner pockets: hole, ambient occlusion, coloured ring. */
   _pockets(c) {
+    const T = this.theme;
     for (const p of CONFIG.POCKETS) {
       const R = CONFIG.POCKET_R;
 
@@ -254,15 +334,22 @@ var Board = class Board {
         c.fill();
       }
 
-      // brass ring, lit from the top-left
+      // chunky themed ring, lit from the top-left (orange on Classic Club)
       const ring = c.createLinearGradient(p.x - R, p.y - R, p.x + R, p.y + R);
-      ring.addColorStop(0, '#f5d98b');
-      ring.addColorStop(0.45, '#b8862f');
-      ring.addColorStop(1, '#6b4a12');
+      ring.addColorStop(0, T.pocketRing[0]);
+      ring.addColorStop(0.45, T.pocketRing[1]);
+      ring.addColorStop(1, T.pocketRing[2]);
       c.strokeStyle = ring;
-      c.lineWidth = 3;
+      c.lineWidth = 4.5;
       c.beginPath();
-      c.arc(p.x, p.y, R + 1.5, 0, Math.PI * 2);
+      c.arc(p.x, p.y, R + 2, 0, Math.PI * 2);
+      c.stroke();
+
+      // hairline inside the ring so it reads as turned metal/wood
+      c.strokeStyle = 'rgba(0,0,0,.5)';
+      c.lineWidth = 1;
+      c.beginPath();
+      c.arc(p.x, p.y, R - 0.5, 0, Math.PI * 2);
       c.stroke();
     }
   }
@@ -273,7 +360,7 @@ var Board = class Board {
     const S = CONFIG.BOARD_SIZE;
 
     const sheen = c.createLinearGradient(0, 0, S * 0.8, S);
-    sheen.addColorStop(0, 'rgba(255,255,255,.16)');
+    sheen.addColorStop(0, 'rgba(255,255,255,.15)');
     sheen.addColorStop(0.32, 'rgba(255,255,255,.04)');
     sheen.addColorStop(0.6, 'rgba(255,255,255,0)');
     c.fillStyle = sheen;
@@ -281,9 +368,28 @@ var Board = class Board {
 
     const vig = c.createRadialGradient(S / 2, S / 2, S * 0.3, S / 2, S / 2, S * 0.78);
     vig.addColorStop(0, 'rgba(0,0,0,0)');
-    vig.addColorStop(1, 'rgba(0,0,0,.32)');
+    vig.addColorStop(1, 'rgba(0,0,0,.30)');
     c.fillStyle = vig;
     c.fillRect(0, 0, S, S);
+  }
+
+  /* ---------------- colour helpers ---------------- */
+
+  /** Shift a #rrggbb by +/- amount per channel. */
+  _shade(hex, amt) {
+    const n = parseInt(hex.slice(1), 16);
+    const cl = (v) => Math.max(0, Math.min(255, v + amt));
+    const r = cl((n >> 16) & 255), g = cl((n >> 8) & 255), b = cl(n & 255);
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+
+  /** Multiply the alpha of an rgba()/rgb() string. */
+  _fade(rgba, mul) {
+    const m = /rgba?\(([^)]+)\)/.exec(rgba);
+    if (!m) return rgba;
+    const parts = m[1].split(',').map(s => s.trim());
+    const a = parts.length > 3 ? parseFloat(parts[3]) : 1;
+    return 'rgba(' + parts[0] + ',' + parts[1] + ',' + parts[2] + ',' + (a * mul).toFixed(3) + ')';
   }
 
   /* ---------------- overlays drawn on top of the coins ---------------- */

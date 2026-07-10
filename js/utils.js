@@ -23,9 +23,9 @@ var CONFIG = (function buildConfig() {
   var PLAY = PLAY_MAX - PLAY_MIN;   // 744
   var CENTER = BOARD_SIZE / 2;      // 450
 
-  var COIN_R = 15.5;         // ratio-accurate: 3.02cm coin on a 73.66cm bed
-  var STRIKER_R = 20.5;      // 4.13cm striker
-  var POCKET_R = 26;         // 4.45cm pocket, nudged for playability
+  var COIN_R = 18;           // enlarged for readability (was ratio-accurate 15.5)
+  var STRIKER_R = 24;        // enlarged striker to match
+  var POCKET_R = 31;         // pocket scaled up so the bigger striker still drops
   var POCKET_INSET = 6;      // pocket centre pushed slightly into the corner
 
   // Base-line block (repeated on all four sides; rotated per side).
@@ -35,7 +35,7 @@ var CONFIG = (function buildConfig() {
   var BASE_X0 = PLAY_MIN + INSET;        // 193
   var BASE_X1 = PLAY_MAX - INSET;        // 707
 
-  var CENTER_CIRCLE_R = 86;              // big centre circle (8.5cm radius)
+  var CENTER_CIRCLE_R = 94;              // big centre circle, scaled with the coins
   var INNER_CIRCLE_R = COIN_R + 3;
 
   return {
@@ -140,6 +140,60 @@ var CONFIG = (function buildConfig() {
       { id: 'onyx',   name: 'Onyx',    face: '#8e97a6', rim: '#171a20' }
     ],
     DEFAULT_STRIKER_COLOR: '#eef2f8',
+
+    /* --- Board themes. Purely cosmetic: never touches physics, so two
+     * online players can each look at a different board. --- */
+    DEFAULT_BOARD_THEME: 'classic',
+    BOARD_THEMES: [
+      {
+        id: 'classic', name: 'Classic Club',
+        frame: ['#e8973a', '#c86f1d', '#a85512', '#d8842a'],
+        frameEdge: 'rgba(255,224,170,.30)',
+        corner: '#171310',
+        bed: ['#f4dfae', '#eccd8f', '#e2bc75', '#efd49b'],
+        grain: '#c09045',
+        line: 'rgba(66,38,12,.78)',
+        accent: '#c22f2b', accentDot: 'rgba(255,232,232,.85)',
+        pocketRing: ['#ffb45e', '#e07b18', '#8a4a0c'],
+        centerFill: 'rgba(194,47,43,.18)'
+      },
+      {
+        id: 'walnut', name: 'Walnut Pro',
+        frame: ['#7a4d1c', '#5d3712', '#4a2b0d', '#6b431a'],
+        frameEdge: 'rgba(255,210,150,.18)',
+        corner: '#221302',
+        bed: ['#e8c98f', '#dcb877', '#d0a862', '#e2c084'],
+        grain: '#8a5f28',
+        line: 'rgba(30,20,10,.72)',
+        accent: '#b5202c', accentDot: 'rgba(255,220,220,.75)',
+        pocketRing: ['#f5d98b', '#b8862f', '#6b4a12'],
+        centerFill: 'rgba(181,32,44,.20)'
+      },
+      {
+        id: 'birch', name: 'Tournament Birch',
+        frame: ['#3a2a20', '#2b1d15', '#20140e', '#332318'],
+        frameEdge: 'rgba(255,235,205,.16)',
+        corner: '#0e0c0a',
+        bed: ['#f8ecd2', '#f2e1bf', '#e9d5ab', '#f5e7ca'],
+        grain: '#c9ab77',
+        line: 'rgba(52,40,24,.72)',
+        accent: '#b83030', accentDot: 'rgba(255,235,235,.85)',
+        pocketRing: ['#e8e8ee', '#9aa2b2', '#4c5361'],
+        centerFill: 'rgba(184,48,48,.16)'
+      },
+      {
+        id: 'royal', name: 'Royal Rosewood',
+        frame: ['#3a1626', '#2a0e1b', '#200a14', '#331321'],
+        frameEdge: 'rgba(255,205,120,.26)',
+        corner: '#0d0b0f',
+        bed: ['#dcae70', '#cd9a58', '#bf8a46', '#d6a563'],
+        grain: '#7c5222',
+        line: 'rgba(28,16,8,.80)',
+        accent: '#8e1b26', accentDot: 'rgba(255,220,200,.80)',
+        pocketRing: ['#ffe08a', '#c99a2e', '#7a5a10'],
+        centerFill: 'rgba(142,27,38,.22)'
+      }
+    ],
 
     /* --- Colours --- */
     COLORS: {

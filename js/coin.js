@@ -4,8 +4,64 @@
  * The class is split cleanly: everything above `draw()` is pure data
  * and is executed on the server too. `draw()` only ever touches the
  * CanvasRenderingContext2D it is handed, so the server never calls it.
+ *
+ * Rendering is SPRITE-CACHED: the first draw of each (kind, quality,
+ * colour) paints the disc once into an offscreen canvas at 3x
+ * resolution; every later frame is two drawImage calls (shadow +
+ * face). That removes ~120 gradient allocations per frame and is the
+ * main reason aiming and online play stay at 60 fps.
  * ============================================================ */
 'use strict';
+
+/* ------------------------------------------------------------------
+ * Shared offscreen sprite cache. Browser-only; the server never draws.
+ * ------------------------------------------------------------------ */
+var CoinSprite = {
+  SS: 3,       // supersample so sprites stay crisp at 2x devicePixelRatio
+  PAD: 3,      // logical px of padding around the disc
+  _m: null,
+
+  /**
+   * @param {string} key    cache key — MUST encode everything that changes pixels
+   * @param {number} r      logical radius the painter draws at
+   * @param {(g:CanvasRenderingContext2D, r:number)=>void} paint centred painter
+   */
+  get(key, r, paint) {
+    if (typeof document === 'undefined') return null;
+    if (!this._m) this._m = new Map();
+    let cv = this._m.get(key);
+    if (!cv) {
+      const half = (r + this.PAD) * this.SS;
+      cv = document.createElement('canvas');
+      cv.width = cv.height = Math.ceil(half * 2);
+      const g = cv.getContext('2d');
+      g.scale(this.SS, this.SS);
+      g.translate(r + this.PAD, r + this.PAD);
+      paint(g, r);
+      this._m.set(key, cv);
+    }
+    return cv;
+  },
+
+  /** Blit a cached sprite centred on (0,0) of the current transform. */
+  blit(ctx, cv, r, baseR) {
+    const half = (baseR + this.PAD) * (r / baseR);
+    ctx.drawImage(cv, -half, -half, half * 2, half * 2);
+  },
+
+  /** Soft round contact shadow, shared by every disc of radius `r`. */
+  shadow(r) {
+    return this.get('shadow:' + r, r * 1.3, (g) => {
+      const sh = g.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 1.28);
+      sh.addColorStop(0, 'rgba(0,0,0,.45)');
+      sh.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = sh;
+      g.beginPath();
+      g.arc(0, 0, r * 1.28, 0, Math.PI * 2);
+      g.fill();
+    });
+  }
+};
 
 var Coin = class Coin extends Body {
   /**
@@ -52,88 +108,26 @@ var Coin = class Coin extends Body {
     const r = this.r * shrink;
     if (r <= 0.4) return;
 
-    const C = CONFIG.COLORS;
-    const face = this.isQueen ? C.queen : (this.type === 'white' ? C.white : C.black);
-    const edge = this.isQueen ? C.queenEdge : (this.type === 'white' ? C.whiteEdge : C.blackEdge);
+    const sprite = CoinSprite.get('coin:' + this.type + ':' + q, this.r,
+      (g, br) => this._paint(g, br, q));
 
     ctx.save();
     ctx.globalAlpha = this.potted ? Math.max(0, 1 - this.sinkT * 0.6) : 1;
     ctx.translate(this.x, this.y);
 
-    /* ---- contact shadow (a soft radial fake — ctx.filter is far too
-       expensive to run 19 times a frame) ---- */
     if (q !== 'low') {
-      const sh = ctx.createRadialGradient(2.4, 3.6, r * 0.5, 2.4, 3.6, r * 1.25);
-      sh.addColorStop(0, 'rgba(0,0,0,.42)');
-      sh.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = sh;
-      ctx.beginPath();
-      ctx.arc(2.4, 3.6, r * 1.25, 0, Math.PI * 2);
-      ctx.fill();
+      const sh = CoinSprite.shadow(this.r);
+      ctx.save();
+      ctx.translate(2.4 * shrink, 3.6 * shrink);
+      CoinSprite.blit(ctx, sh, r * 1.3, this.r * 1.3);
+      ctx.restore();
     }
 
     ctx.rotate(this.angle + this.grain);
-
-    /* ---- bevelled rim ---- */
-    const rim = ctx.createLinearGradient(-r, -r, r, r);
-    rim.addColorStop(0, edge);
-    rim.addColorStop(0.5, this.type === 'black' ? '#3a3a3a' : edge);
-    rim.addColorStop(1, '#000');
-    ctx.fillStyle = rim;
-    ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.fill();
-
-    /* ---- lacquered face ---- */
-    const g = ctx.createRadialGradient(-r * 0.34, -r * 0.4, r * 0.05, 0, 0, r * 0.94);
-    g.addColorStop(0, this._lighten(face, 0.35));
-    g.addColorStop(0.55, face);
-    g.addColorStop(1, this._darken(face, 0.3));
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(0, 0, r * 0.88, 0, Math.PI * 2);
-    ctx.fill();
-
-    /* ---- turned concentric grooves ---- */
-    if (q !== 'low') {
-      ctx.strokeStyle = this.type === 'black' ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.13)';
-      ctx.lineWidth = 0.8;
-      for (let i = 1; i <= 3; i++) {
-        ctx.beginPath();
-        ctx.arc(0, 0, r * (0.24 + i * 0.19), 0, Math.PI * 2);
-        ctx.stroke();
-      }
-    }
-
-    /* ---- queen's engraved star ---- */
-    if (this.isQueen) {
-      ctx.strokeStyle = 'rgba(255,225,225,.6)';
-      ctx.lineWidth = 1.1;
-      ctx.beginPath();
-      for (let i = 0; i < 10; i++) {
-        const a = -Math.PI / 2 + i * Math.PI / 5;
-        const rr = i % 2 ? r * 0.22 : r * 0.5;
-        const x = Math.cos(a) * rr, y = Math.sin(a) * rr;
-        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-      }
-      ctx.closePath();
-      ctx.stroke();
-    }
-
-    /* ---- specular highlight ---- */
-    if (q === 'high') {
-      const s = ctx.createRadialGradient(-r * 0.36, -r * 0.42, 0, -r * 0.36, -r * 0.42, r * 0.62);
-      s.addColorStop(0, 'rgba(255,255,255,.55)');
-      s.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = s;
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.88, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
+    CoinSprite.blit(ctx, sprite, r, this.r);
     ctx.restore();
 
-    /* ---- "I was just hit" glow ---- */
+    /* ---- "I was just hit" glow (rare, kept as cheap vector) ---- */
     if (this.glow > 0 && q !== 'low') {
       ctx.save();
       ctx.globalAlpha = this.glow * 0.5;
@@ -143,6 +137,70 @@ var Coin = class Coin extends Body {
       ctx.arc(this.x, this.y, r + 3 + (1 - this.glow) * 5, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
+    }
+  }
+
+  /** Paints the disc once, centred on (0,0), at radius `r`. */
+  _paint(g, r, q) {
+    const C = CONFIG.COLORS;
+    const face = this.isQueen ? C.queen : (this.type === 'white' ? C.white : C.black);
+    const edge = this.isQueen ? C.queenEdge : (this.type === 'white' ? C.whiteEdge : C.blackEdge);
+
+    /* ---- bevelled rim ---- */
+    const rim = g.createLinearGradient(-r, -r, r, r);
+    rim.addColorStop(0, edge);
+    rim.addColorStop(0.5, this.type === 'black' ? '#3a3a3a' : edge);
+    rim.addColorStop(1, '#000');
+    g.fillStyle = rim;
+    g.beginPath();
+    g.arc(0, 0, r, 0, Math.PI * 2);
+    g.fill();
+
+    /* ---- lacquered face ---- */
+    const gr = g.createRadialGradient(-r * 0.34, -r * 0.4, r * 0.05, 0, 0, r * 0.94);
+    gr.addColorStop(0, this._lighten(face, 0.35));
+    gr.addColorStop(0.55, face);
+    gr.addColorStop(1, this._darken(face, 0.3));
+    g.fillStyle = gr;
+    g.beginPath();
+    g.arc(0, 0, r * 0.88, 0, Math.PI * 2);
+    g.fill();
+
+    /* ---- turned concentric grooves ---- */
+    if (q !== 'low') {
+      g.strokeStyle = this.type === 'black' ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.13)';
+      g.lineWidth = 0.8;
+      for (let i = 1; i <= 3; i++) {
+        g.beginPath();
+        g.arc(0, 0, r * (0.24 + i * 0.19), 0, Math.PI * 2);
+        g.stroke();
+      }
+    }
+
+    /* ---- queen's engraved star ---- */
+    if (this.isQueen) {
+      g.strokeStyle = 'rgba(255,225,225,.6)';
+      g.lineWidth = 1.1;
+      g.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + i * Math.PI / 5;
+        const rr = i % 2 ? r * 0.22 : r * 0.5;
+        const x = Math.cos(a) * rr, y = Math.sin(a) * rr;
+        i ? g.lineTo(x, y) : g.moveTo(x, y);
+      }
+      g.closePath();
+      g.stroke();
+    }
+
+    /* ---- specular highlight ---- */
+    if (q === 'high') {
+      const s = g.createRadialGradient(-r * 0.36, -r * 0.42, 0, -r * 0.36, -r * 0.42, r * 0.62);
+      s.addColorStop(0, 'rgba(255,255,255,.55)');
+      s.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = s;
+      g.beginPath();
+      g.arc(0, 0, r * 0.88, 0, Math.PI * 2);
+      g.fill();
     }
   }
 
@@ -160,4 +218,5 @@ var Coin = class Coin extends Body {
   _darken(hex, t) { return this._mix(hex, 0, t); }
 };
 
+globalThis.CoinSprite = CoinSprite;
 globalThis.Coin = Coin;

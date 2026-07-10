@@ -2,8 +2,12 @@
  * striker.js — the striker disc + the aiming model.
  *
  * The striker is just a heavier, larger Coin as far as the solver is
- * concerned (mass 2.6x, radius 20.5 vs 15.5). Everything else here is
- * presentation and input maths.
+ * concerned. Everything else here is presentation and input maths.
+ *
+ * Look: a tournament-style acrylic striker — ivory body with bold
+ * coloured rings and a coloured centre dot (the classic design), where
+ * the ring colour comes from the player's chosen skin. Rendering is
+ * sprite-cached per skin, same as the coins.
  * ============================================================ */
 'use strict';
 
@@ -36,70 +40,88 @@ var Striker = class Striker extends Coin {
     const r = this.r * shrink;
     if (r <= 0.4) return;
 
+    const sprite = CoinSprite.get('striker:' + this.face + ':' + this.rim + ':' + q,
+      this.r, (g, br) => this._paintStriker(g, br, q));
+
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.globalAlpha = this.potted ? Math.max(0, 1 - this.sinkT * 0.6) : 1;
 
     if (q !== 'low') {
-      const sh = ctx.createRadialGradient(3, 4.2, r * 0.5, 3, 4.2, r * 1.3);
-      sh.addColorStop(0, 'rgba(0,0,0,.5)');
-      sh.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = sh;
-      ctx.beginPath();
-      ctx.arc(3, 4.2, r * 1.3, 0, Math.PI * 2);
-      ctx.fill();
+      const sh = CoinSprite.shadow(this.r);
+      ctx.save();
+      ctx.translate(3 * shrink, 4.2 * shrink);
+      CoinSprite.blit(ctx, sh, r * 1.3, this.r * 1.3);
+      ctx.restore();
     }
 
     ctx.rotate(this.angle);
+    CoinSprite.blit(ctx, sprite, r, this.r);
+    ctx.restore();
+  }
 
-    // machined rim, lit from the top-left
-    const rim = ctx.createLinearGradient(-r, -r, r, r);
+  /** Paints the striker once, centred on (0,0), at radius `r`. */
+  _paintStriker(g, r, q) {
+    /* ---- machined rim, lit from the top-left ---- */
+    const rim = g.createLinearGradient(-r, -r, r, r);
     rim.addColorStop(0, this._lighten(this.rim, 0.75));
     rim.addColorStop(0.35, this.rim);
     rim.addColorStop(0.7, this._darken(this.rim, 0.42));
     rim.addColorStop(1, this._lighten(this.rim, 0.4));
-    ctx.fillStyle = rim;
-    ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.fill();
+    g.fillStyle = rim;
+    g.beginPath();
+    g.arc(0, 0, r, 0, Math.PI * 2);
+    g.fill();
 
-    // lacquered face, tinted to the player's chosen colour
-    const g = ctx.createRadialGradient(-r * 0.35, -r * 0.4, r * 0.05, 0, 0, r);
-    g.addColorStop(0, this._lighten(this.face, 0.55));
-    g.addColorStop(0.5, this.face);
-    g.addColorStop(1, this._darken(this.face, 0.24));
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(0, 0, r * 0.87, 0, Math.PI * 2);
-    ctx.fill();
+    /* ---- glossy ivory body, faintly tinted by the skin ---- */
+    const body = g.createRadialGradient(-r * 0.32, -r * 0.38, r * 0.05, 0, 0, r * 0.95);
+    body.addColorStop(0, this._lighten(this.face, 0.7));
+    body.addColorStop(0.5, this._lighten(this.face, 0.35));
+    body.addColorStop(1, this.face);
+    g.fillStyle = body;
+    g.beginPath();
+    g.arc(0, 0, r * 0.87, 0, Math.PI * 2);
+    g.fill();
 
-    if (q !== 'low') {
-      // machined rings
-      ctx.strokeStyle = 'rgba(20,26,36,.20)';
-      ctx.lineWidth = 0.9;
-      for (let i = 1; i <= 3; i++) {
-        ctx.beginPath();
-        ctx.arc(0, 0, r * (0.22 + i * 0.2), 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      // centre dimple
-      ctx.fillStyle = 'rgba(20,26,36,.30)';
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.11, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    /* ---- tournament rings in the skin colour ---- */
+    g.strokeStyle = this.rim;
+    g.globalAlpha = 0.9;
+    g.lineWidth = r * 0.10;
+    g.beginPath();
+    g.arc(0, 0, r * 0.68, 0, Math.PI * 2);
+    g.stroke();
 
+    g.globalAlpha = 0.55;
+    g.lineWidth = r * 0.035;
+    g.beginPath();
+    g.arc(0, 0, r * 0.48, 0, Math.PI * 2);
+    g.stroke();
+    g.globalAlpha = 1;
+
+    /* ---- coloured centre boss with a bright pip ---- */
+    const boss = g.createRadialGradient(-r * 0.05, -r * 0.07, r * 0.02, 0, 0, r * 0.2);
+    boss.addColorStop(0, this._lighten(this.rim, 0.45));
+    boss.addColorStop(1, this._darken(this.rim, 0.2));
+    g.fillStyle = boss;
+    g.beginPath();
+    g.arc(0, 0, r * 0.17, 0, Math.PI * 2);
+    g.fill();
+
+    g.fillStyle = this._lighten(this.face, 0.8);
+    g.beginPath();
+    g.arc(-r * 0.045, -r * 0.055, r * 0.05, 0, Math.PI * 2);
+    g.fill();
+
+    /* ---- specular sweep ---- */
     if (q === 'high') {
-      const s = ctx.createRadialGradient(-r * 0.38, -r * 0.44, 0, -r * 0.38, -r * 0.44, r * 0.66);
+      const s = g.createRadialGradient(-r * 0.38, -r * 0.44, 0, -r * 0.38, -r * 0.44, r * 0.66);
       s.addColorStop(0, 'rgba(255,255,255,.85)');
       s.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = s;
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.87, 0, Math.PI * 2);
-      ctx.fill();
+      g.fillStyle = s;
+      g.beginPath();
+      g.arc(0, 0, r * 0.87, 0, Math.PI * 2);
+      g.fill();
     }
-
-    ctx.restore();
   }
 
   /** Pulsing halo drawn while it is this player's turn and nothing is moving. */

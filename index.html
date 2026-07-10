@@ -90,6 +90,12 @@
           </label>
         </div>
 
+        <div class="row col">
+          <span>Carrom Board</span>
+          <div class="board-swatches" id="boardSwatches"></div>
+          <small class="muted">Your board, your style — it only changes what you see.</small>
+        </div>
+
         <hr />
 
         <label class="row">
@@ -341,6 +347,9 @@
       <button class="icon-btn" id="btnFullscreen" title="Fullscreen">⛶</button>
     </div>
 
+    <!-- Incoming messages float here when the chat panel is closed -->
+    <div class="chat-bubbles" id="chatBubbles" aria-live="polite"></div>
+
     <!-- Chat -->
     <aside class="chat glass" id="chatPanel" hidden>
       <header><strong>Chat</strong><button class="icon-btn" id="btnChatClose">✕</button></header>
@@ -349,6 +358,14 @@
         <input id="chatInput" maxlength="160" placeholder="Say something…" autocomplete="off" />
         <button class="btn sm" type="submit">Send</button>
       </form>
+      <div class="quick-chat emoji">
+        <button data-qc="👍">👍</button>
+        <button data-qc="😂">😂</button>
+        <button data-qc="😮">😮</button>
+        <button data-qc="🔥">🔥</button>
+        <button data-qc="🎉">🎉</button>
+        <button data-qc="😭">😭</button>
+      </div>
       <div class="quick-chat">
         <button data-qc="Nice shot!">Nice shot!</button>
         <button data-qc="Oops.">Oops.</button>

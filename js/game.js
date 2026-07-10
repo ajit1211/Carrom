@@ -36,7 +36,7 @@ class Game extends EventBus {
     this.net = net;
 
     this.settings = Settings.load();
-    this.board = new Board(this.settings.quality);
+    this.board = new Board(this.settings.quality, this.settings.boardTheme);
     this.particles = new ParticleSystem();
     this.aim = new Aim();
 
@@ -104,6 +104,7 @@ class Game extends EventBus {
     this.settings = Settings.load();
     this.turnTime = this.settings.turnTime;
     this.board.setQuality(this.settings.quality);
+    this.board.setTheme(this.settings.boardTheme);
     this.debug = this.settings.debug;
 
     this.playerCount = opts.playerCount === 4 ? 4 : 2;
@@ -284,6 +285,8 @@ class Game extends EventBus {
    */
   _onMove(e) {
     if (this.drag !== 'aim') return;
+    // Only geometry updates here: pointermove can fire at 120-240 Hz, so
+    // every DOM/style/audio write is deferred to the 60 Hz _update tick.
     const p = this._toBoard(e.clientX, e.clientY);
     this.pointer = p;
     this.aim.move(p.x, p.y);
@@ -293,12 +296,7 @@ class Game extends EventBus {
       if (!this._placeStriker(this._projectToRail(p))) this.ui.flashStrikerBlocked();
       const s = this.world.striker;
       this.aim.setOrigin(s.x, s.y);
-      this.ui.setPower(0, true);
-      return;
     }
-
-    this.ui.setPower(this.aim.power, true);
-    if (this.settings.sound) audio.charge(this.aim.power);
   }
 
   _onUp() {
@@ -402,10 +400,15 @@ class Game extends EventBus {
     this.ui.on('settings', (s) => {
       this.settings = s;
       this.board.setQuality(s.quality);
+      this.board.setTheme(s.boardTheme);
       this.debug = s.debug;
       this.turnTime = s.turnTime;
       if (this.world) this._applyStrikerSkin();
       this._resize();
+    });
+    this.ui.on('board-theme', (id) => {
+      this.settings.boardTheme = id;
+      this.board.setTheme(id);
     });
     this.ui.on('striker-color', (hex) => {
       if (!this.running) return;
@@ -509,6 +512,20 @@ class Game extends EventBus {
       this.keyCharge = Utils.clamp(this.keyCharge + dt * 1.15, 0, 1);
       this.ui.setPower(this.keyCharge, true);
       if (this.settings.sound) audio.charge(this.keyCharge);
+    }
+
+    // Power meter + charge sound follow the drag once per frame, not per
+    // pointermove event — keeps aiming smooth on high-rate mice/touch.
+    if (this.drag === 'aim' && this.aim.active) {
+      const p = this.aim.inDeadzone ? 0 : this.aim.power;
+      this.ui.setPower(p, true);
+      // Each charge() spawns an oscillator, so only chirp when the power
+      // actually moved — not 60 times a second while holding steady.
+      if (p > 0 && this.settings.sound && Math.abs(p - (this._lastChargeP || 0)) > 0.02) {
+        this._lastChargeP = p;
+        audio.charge(p);
+      }
+      if (p === 0) this._lastChargeP = 0;
     }
 
     if (this.simulating) {
@@ -927,8 +944,8 @@ class Game extends EventBus {
 
     ctx.save();
     ctx.fillStyle = color;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = this.settings.quality === 'high' ? 10 : 0;
+    // NOTE: no shadowBlur here — canvas shadows force a slow path and made
+    // the whole aim overlay stutter on mid-range phones.
 
     ctx.beginPath();
     ctx.moveTo(x1 + px * width * 0.35, y1 + py * width * 0.35);

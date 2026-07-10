@@ -384,12 +384,17 @@ var World = class World {
     s.angle = 0;
   }
 
-  /** Would the striker overlap a live coin at rail position `u`? */
+  /**
+   * Would the striker overlap a live coin at rail position `u`?
+   * Always false now: the striker may be placed ON TOP of coins sitting on
+   * the base line (like the popular mobile games). The collision solver's
+   * positional correction separates them on the first sub-steps of the
+   * shot, so an overlapped start simply shoves the coin aside.
+   * Kept as a function so client, server and any future rule can share one
+   * definition. MUST stay deterministic and identical on both sides.
+   */
   strikerBlockedAt(u, seat) {
-    const p = Utils.strikerPos(seat, u);
-    const s = this.striker;
-    return this.coins.some(c => c.active && !c.potted &&
-      Utils.dist2(p.x, p.y, c.x, c.y) < (s.r + c.r) * (s.r + c.r));
+    return false;
   }
 
   /* ---------------- aim prediction (pure geometry, no side effects) ---------------- */

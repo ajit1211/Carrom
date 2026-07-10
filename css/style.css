@@ -306,6 +306,32 @@ input[type='range'] { accent-color: var(--accent); width: 160px; }
 .swatch:hover { transform: translateY(-2px) scale(1.05); }
 .swatch.on { box-shadow: 0 0 0 3px var(--accent), 0 3px 10px rgba(0,0,0,.45); }
 
+/* ---------- board theme picker ---------- */
+.board-swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 10px; }
+.board-swatch {
+  display: grid; gap: 6px; justify-items: center;
+  padding: 10px 8px; border-radius: 14px;
+  background: var(--glass); border: 1px solid var(--stroke);
+  transition: transform var(--t-fast), box-shadow var(--t-fast), border-color var(--t-fast);
+}
+.board-swatch small { font-size: .68rem; color: var(--muted); }
+.board-swatch:hover { transform: translateY(-2px); border-color: var(--accent-soft); }
+.board-swatch.on { box-shadow: 0 0 0 2px var(--accent); border-color: var(--accent); }
+.board-swatch.on small { color: var(--text); }
+/* a tiny board: frame, bed, four pocket dots */
+.bs-board {
+  position: relative; width: 64px; height: 64px; border-radius: 8px;
+  background: var(--bframe);
+  box-shadow: inset 0 0 0 8px var(--bframe), inset 0 0 0 9px rgba(0,0,0,.4);
+  display: grid; place-items: center;
+}
+.bs-board::after { content: ''; width: 44px; height: 44px; border-radius: 2px; background: var(--bbed); }
+.bs-board i { position: absolute; width: 9px; height: 9px; border-radius: 50%; background: #0a0a0a; box-shadow: 0 0 0 2px var(--bring); z-index: 1; }
+.bs-board i:nth-child(1) { left: 11px; top: 11px; }
+.bs-board i:nth-child(2) { right: 11px; top: 11px; }
+.bs-board i:nth-child(3) { left: 11px; bottom: 11px; }
+.bs-board i:nth-child(4) { right: 11px; bottom: 11px; }
+
 .custom-color { display: flex; align-items: center; gap: 10px; }
 .custom-color input[type='color'] {
   width: 44px; height: 32px; padding: 0; border-radius: 8px;
@@ -512,6 +538,38 @@ input[type='range'] { accent-color: var(--accent); width: 160px; }
 .quick-chat { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 8px 8px; }
 .quick-chat button { font-size: .7rem; padding: 5px 9px; border-radius: 99px; background: var(--glass); border: 1px solid var(--stroke); }
 .quick-chat button:hover { background: var(--glass-strong); }
+.quick-chat.emoji { padding-top: 8px; }
+.quick-chat.emoji button { font-size: 1.05rem; padding: 4px 8px; line-height: 1; }
+
+/* Floating message bubbles: shown beside the board while the panel is closed,
+   so every player sees incoming chat without opening anything. */
+.chat-bubbles {
+  position: fixed; right: 12px; bottom: 132px; z-index: 15;
+  display: grid; gap: 6px; justify-items: end;
+  max-width: min(280px, 70vw);
+  pointer-events: none;
+}
+.chat-bubble {
+  padding: 7px 12px; border-radius: 14px 14px 4px 14px;
+  background: rgba(10, 13, 24, .9); border: 1px solid var(--stroke);
+  backdrop-filter: blur(8px);
+  font-size: .8rem; word-break: break-word;
+  animation: slideUp .2s ease;
+  transition: opacity .35s ease, transform .35s ease;
+}
+.chat-bubble b { display: block; font-size: .64rem; color: var(--accent); }
+.chat-bubble.out { opacity: 0; transform: translateX(16px); }
+
+/* Wide screens + online game: dock the chat open at the right of the board. */
+@media (min-width: 1180px) {
+  #screen-game.online { padding-right: 336px; }
+  #screen-game.online .chat {
+    top: 78px; bottom: 78px; right: 14px;
+    width: 306px; max-height: none;
+  }
+  #screen-game.online .chat-bubbles { display: none; }
+  #screen-game.online #btnChatClose { display: none; }
+}
 
 /* ============================================================
    OVERLAYS

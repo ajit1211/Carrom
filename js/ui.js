@@ -25,6 +25,7 @@ class UIManager extends EventBus {
     this._bindNav();
     this._bindSettings();
     this._bindStrikerColor();
+    this._bindBoardTheme();
     this._bindGameHud();
     this._bindLobby();
     this._bindFormat();
@@ -81,6 +82,36 @@ class UIManager extends EventBus {
     this.el.setStrikerCustom.addEventListener('input', (e) => this._pickStrikerColor(e.target.value));
 
     this._pickStrikerColor(this.profile.strikerColor, true);
+  }
+
+  /* ---------------- board theme ---------------- */
+
+  _bindBoardTheme() {
+    const grid = this.el.boardSwatches;
+    grid.innerHTML = CONFIG.BOARD_THEMES.map(t =>
+      `<button type="button" class="board-swatch" data-board="${t.id}" title="${t.name}"
+               style="--bframe:${t.frame[1]};--bbed:${t.bed[1]};--bring:${t.pocketRing[1]}">
+         <span class="bs-board"><i></i><i></i><i></i><i></i></span>
+         <small>${t.name}</small>
+       </button>`
+    ).join('');
+
+    grid.addEventListener('click', (e) => {
+      const b = e.target.closest('.board-swatch');
+      if (!b) return;
+      this._pickBoardTheme(b.dataset.board);
+      if (this.settings.sound) audio.click();
+    });
+
+    this._pickBoardTheme(this.settings.boardTheme, true);
+  }
+
+  _pickBoardTheme(id, silent) {
+    if (!CONFIG.BOARD_THEMES.some(t => t.id === id)) id = CONFIG.DEFAULT_BOARD_THEME;
+    this.settings = Settings.patch({ boardTheme: id });
+    this.el.boardSwatches.querySelectorAll('.board-swatch').forEach(s =>
+      s.classList.toggle('on', s.dataset.board === id));
+    if (!silent) this.emit('board-theme', id);
   }
 
   _pickStrikerColor(hex, silent) {
@@ -145,9 +176,10 @@ class UIManager extends EventBus {
 
       strikerSwatches: $id('strikerSwatches'), setStrikerCustom: $id('setStrikerCustom'),
       strikerPreview: $id('strikerPreview'),
+      boardSwatches: $id('boardSwatches'),
 
       chatPanel: $id('chatPanel'), chatLog: $id('chatLog'), chatDot: $id('chatDot'),
-      btnChat: $id('btnChat'),
+      btnChat: $id('btnChat'), chatBubbles: $id('chatBubbles'),
 
       resultTitle: $id('resultTitle'), resultSub: $id('resultSub'), resultEmblem: $id('resultEmblem'),
       rsName: [$id('rsName0'), $id('rsName1')], rsScore: [$id('rsScore0'), $id('rsScore1')],
@@ -639,12 +671,44 @@ class UIManager extends EventBus {
     n.innerHTML = system ? this._esc(text) : `<b>${this._esc(name)}</b>${this._esc(text)}`;
     this.el.chatLog.appendChild(n);
     this.el.chatLog.scrollTop = this.el.chatLog.scrollHeight;
-    if (this.el.chatPanel.hidden && !mine) this.el.chatDot.hidden = false;
+
+    // Panel closed (small screens): float the message beside the board so
+    // nobody ever misses a text or an emoji from another player.
+    if (this.el.chatPanel.hidden && !mine) {
+      this.el.chatDot.hidden = false;
+      this._chatBubble(system ? '' : name, text);
+    }
+  }
+
+  /** Transient message bubble at the right edge of the board. */
+  _chatBubble(name, text) {
+    const holder = this.el.chatBubbles;
+    if (!holder) return;
+    const n = document.createElement('div');
+    n.className = 'chat-bubble';
+    n.innerHTML = (name ? `<b>${this._esc(name)}</b>` : '') + this._esc(text);
+    holder.appendChild(n);
+    while (holder.children.length > 4) holder.firstChild.remove();
+    setTimeout(() => {
+      n.classList.add('out');
+      setTimeout(() => n.remove(), 350);
+    }, 4200);
   }
 
   enableChat(on) {
     this.el.btnChat.hidden = !on;
-    if (!on) this.el.chatPanel.hidden = true;
+    this.screens.game.classList.toggle('online', on);
+    if (!on) {
+      this.el.chatPanel.hidden = true;
+      if (this.el.chatBubbles) this.el.chatBubbles.innerHTML = '';
+      return;
+    }
+    // Wide screens: dock the chat open beside the board so every player
+    // sees messages live. Small screens keep the toggle button + bubbles.
+    if (window.matchMedia('(min-width: 1180px)').matches) {
+      this.el.chatPanel.hidden = false;
+      this.el.chatDot.hidden = true;
+    }
   }
 
   clearChat() { this.el.chatLog.innerHTML = ''; }

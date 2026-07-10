@@ -119,6 +119,7 @@ var Settings = {
     volume: 70,
     quality: 'high',
     theme: 'midnight',
+    boardTheme: CONFIG.DEFAULT_BOARD_THEME,
     turnTime: CONFIG.DEFAULT_TURN_TIME,
     aimGuide: true,
     showFps: false,
