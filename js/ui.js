@@ -156,11 +156,12 @@ class UIManager extends EventBus {
       btnSound: $id('btnSound'), btnMusic: $id('btnMusic'),
 
       pcard: [$id('pcard0'), $id('pcard1')],
-      pname: [$id('pname0'), $id('pname1')],
       pavatar: [$id('pavatar0'), $id('pavatar1')],
       pscore: [$id('pscore0'), $id('pscore1')],
       pqueen: [$id('pqueen0'), $id('pqueen1')],
       pbar: [$id('pbar0'), $id('pbar1')],
+      ppip: [$id('ppip0'), $id('ppip1')],
+      ppop: [$id('ppop0'), $id('ppop1')],
 
       timerRing: $id('timerRing'), timerText: $id('timerText'),
       turnIndicator: $id('turnIndicator'),
@@ -171,6 +172,7 @@ class UIManager extends EventBus {
 
       roomCode: $id('roomCode'), connDot: $id('connDot'), onlineHint: $id('onlineHint'),
       seatGrid: $id('seatGrid'), formatBadge: $id('formatBadge'),
+      ownerColors: $id('ownerColors'), teamColorSeg: $id('teamColorSeg'),
       spectatorCount: $id('spectatorCount'),
       btnReady: $id('btnReady'), joinCode: $id('joinCode'), formatSeg: $id('formatSeg'),
 
@@ -385,6 +387,18 @@ class UIManager extends EventBus {
     // Don't let the arrow keys reach the game while the knob has focus.
     sl.addEventListener('keydown', (e) => e.stopPropagation());
 
+    /* Tap a team block to read who is actually on that team. */
+    this.el.pcard.forEach((card, team) => {
+      card.addEventListener('click', (e) => { e.stopPropagation(); this._toggleTeamPop(team); });
+      card.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault(); e.stopPropagation();
+        this._toggleTeamPop(team);
+      });
+    });
+    // Anywhere else — board, HUD, backdrop — dismisses it.
+    document.addEventListener('click', () => this._toggleTeamPop(-1));
+
     $id('btnPause').addEventListener('click', () => this.emit('pause'));
     $id('btnUndoStriker').addEventListener('click', () => this.emit('reset-striker'));
     $id('btnFullscreen').addEventListener('click', () => this._fullscreen());
@@ -403,30 +417,72 @@ class UIManager extends EventBus {
 
   /** Everyone on a team, e.g. "Ajit & Ravi" for doubles. */
   teamNames(team) {
-    return Utils.seatsFor(this._playerCount)
-      .filter(s => Utils.teamOf(s, this._playerCount) === team)
+    return this.teamSeats(team)
       .map(s => this._players[s] ? this._players[s].name : '—')
       .join(' & ');
   }
 
+  teamSeats(team) {
+    return Utils.seatsFor(this._playerCount).filter(s => Utils.teamOf(s, this._playerCount) === team);
+  }
+
   /**
+   * The HUD blocks are deliberately tiny — an avatar and the coin tally — so
+   * nothing gets clipped on a phone. The names live in a popover instead,
+   * opened by tapping the block.
+   *
    * @param {Player[]} players sparse, indexed by seat
    * @param {2|4} playerCount
+   * @param {boolean} [colorSwap] which team plays which colour
    */
-  setPlayers(players, playerCount, localSeat) {
+  setPlayers(players, playerCount, localSeat, colorSwap) {
     this._players = players;
     this._playerCount = playerCount;
     this._localSeat = localSeat;
+    this._colorSwap = !!colorSwap;
 
     for (let team = 0; team < 2; team++) {
-      const names = this.teamNames(team);
-      this.el.pname[team].textContent = names;
-      this.el.pname[team].title = names;
-      const first = Utils.seatsFor(playerCount).find(s => Utils.teamOf(s, playerCount) === team);
-      const p = players[first];
+      const seats = this.teamSeats(team);
+      const p = players[seats[0]];
       this.el.pavatar[team].textContent = p ? p.initial : '?';
+      this._paintPip(team, Utils.colorOfTeam(team, this._colorSwap));
+
+      const names = this.teamNames(team);
+      this.el.pcard[team].title = names;
+      this.el.pcard[team].setAttribute('aria-label', names);
+
+      this.el.ppop[team].innerHTML =
+        `<h5>${Utils.colorOfTeam(team, this._colorSwap) === 'white' ? 'White' : 'Black'} team</h5>` +
+        seats.map(s => {
+          const q = players[s];
+          return `<span><b>${q ? this._esc(q.initial) : '?'}</b>${q ? this._esc(q.name) : '—'}` +
+                 `${s === localSeat ? '<i>you</i>' : ''}</span>`;
+        }).join('');
     }
+    this._toggleTeamPop(-1);
     document.getElementById('screen-game').classList.toggle('doubles', playerCount === 4);
+  }
+
+  /** The coin colour dot on a team's HUD block. */
+  _paintPip(team, color) {
+    const pip = this.el.ppip[team];
+    if (pip.dataset.color === color) return;
+    pip.dataset.color = color;
+    pip.className = 'pip ' + color;
+  }
+
+  /** Only one name popover open at a time; -1 closes both. */
+  _toggleTeamPop(team) {
+    const reopen = team >= 0 && this.el.ppop[team].hidden;
+    for (let t = 0; t < 2; t++) {
+      this.el.ppop[t].hidden = true;
+      this.el.pcard[t].classList.remove('popped');
+      this.el.pcard[t].setAttribute('aria-expanded', 'false');
+    }
+    if (!reopen) return;
+    this.el.ppop[team].hidden = false;
+    this.el.pcard[team].classList.add('popped');
+    this.el.pcard[team].setAttribute('aria-expanded', 'true');
   }
 
   /** @param {object} hud from RulesEngine.hud() */
@@ -435,6 +491,8 @@ class UIManager extends EventBus {
       ? Utils.teamOf(ctx.localSeat, hud.playerCount) : null;
 
     for (let team = 0; team < 2; team++) {
+      // The server's sync carries the room owner's colour pick with it.
+      this._paintPip(team, Utils.colorOfTeam(team, hud.colorSwap));
       const prev = this.el.pscore[team].textContent;
       const val = String(hud.pocketed[team]);
       if (prev !== val) {
@@ -546,6 +604,22 @@ class UIManager extends EventBus {
     $id('btnLeaveRoom').addEventListener('click', () => this.emit('leave-room'));
     $id('btnReady').addEventListener('click', () => this.emit('ready'));
 
+    /* Pick your side: seats are buttons while the room is still filling. */
+    this.el.seatGrid.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-seat]');
+      if (!b) return;
+      if (this.settings.sound) audio.click();
+      this.emit('choose-seat', Number(b.dataset.seat));
+    });
+
+    /* Room owner only: which coins their team plays. */
+    this.el.teamColorSeg.querySelectorAll('button').forEach(b => {
+      b.addEventListener('click', () => {
+        if (this.settings.sound) audio.click();
+        this.emit('team-color', b.dataset.color);
+      });
+    });
+
     $id('btnCopyCode').addEventListener('click', () => this._copy(this.el.roomCode.textContent, 'Room code copied'));
     $id('btnCopyLink').addEventListener('click', () => {
       const url = location.origin + location.pathname + '?room=' + this.el.roomCode.textContent;
@@ -579,29 +653,40 @@ class UIManager extends EventBus {
   /**
    * Render the lobby seats. Singles shows the two facing seats; doubles shows
    * all four grouped into their teams, so partners are visibly paired.
+   *
+   * An empty seat is a button: taking it is how a player chooses their side —
+   * and in doubles, therefore, their team.
    */
   setRoom(room, mySeat) {
     const count = room.playerCount === 4 ? 4 : 2;
     this._playerCount = count;
+    this._colorSwap = !!room.colorSwap;
 
     this.el.roomCode.textContent = room.code;
     this.el.formatBadge.textContent = count === 4 ? '2 v 2 · Doubles' : '1 v 1';
 
+    const side = ['Bottom', 'Left', 'Top', 'Right'];
     const seats = Utils.seatsFor(count);
     const cell = (seat) => {
       const p = room.players[seat];
       const team = Utils.teamOf(seat, count);
-      const color = Utils.colorOfTeam(team);
+      const color = Utils.colorOfTeam(team, room.colorSwap);
       const mine = seat === mySeat;
-      const cls = ['seat', p && p.ready ? 'ready' : '', mine ? 'me' : ''].filter(Boolean).join(' ');
-      const name = p ? this._esc(p.name) + (mine ? ' (you)' : '') : 'Waiting…';
+      const owner = p && room.ownerId && p.id === room.ownerId;
+      const cls = ['seat', p && p.ready ? 'ready' : '', mine ? 'me' : '', p ? '' : 'empty']
+        .filter(Boolean).join(' ');
+      const name = p ? this._esc(p.name) + (mine ? ' (you)' : '') + (owner ? ' 👑' : '') : 'Waiting…';
       const status = p ? (p.ready ? 'Ready' : (p.connected ? 'Not ready' : 'Disconnected')) : 'Empty';
-      const initial = p ? this._esc((p.name[0] || '?').toUpperCase()) : '?';
+      const initial = p ? this._esc((p.name[0] || '?').toUpperCase()) : '+';
+      const sit = (!p && !room.started)
+        ? `<button type="button" class="btn sm sit" data-seat="${seat}">Sit here</button>` : '';
       return `<div class="${cls}">
+        <small class="seat-side">${side[seat]}</small>
         <div class="avatar lg">${initial}</div>
         <strong>${name}</strong>
         <em class="tag ${color}">${color === 'white' ? 'White' : 'Black'}</em>
         <span class="ready-pill">${status}</span>
+        ${sit}
       </div>`;
     };
 
@@ -610,13 +695,22 @@ class UIManager extends EventBus {
       this.el.seatGrid.innerHTML = cell(0) + '<div class="vs">VS</div>' + cell(2);
     } else {
       // team 0 = seats {0,2}, team 1 = seats {1,3}
-      const team = (t) => `<div class="team-col">
-          <h4 class="team-head ${Utils.colorOfTeam(t)}">${t === 0 ? 'White' : 'Black'} Team</h4>
+      const team = (t) => {
+        const c = Utils.colorOfTeam(t, room.colorSwap);
+        return `<div class="team-col">
+          <h4 class="team-head ${c}">${c === 'white' ? 'White' : 'Black'} Team</h4>
           ${seats.filter(s => Utils.teamOf(s, count) === t).map(cell).join('')}
         </div>`;
+      };
       this.el.seatGrid.className = 'seats doubles';
       this.el.seatGrid.innerHTML = team(0) + '<div class="vs">VS</div>' + team(1);
     }
+
+    /* The owner, and only the owner, chooses the coins their team plays. */
+    const amOwner = !!room.ownerId && room.ownerId === Profile.load().playerId;
+    this.el.ownerColors.hidden = !amOwner || room.started;
+    this.el.teamColorSeg.querySelectorAll('button').forEach(b =>
+      b.classList.toggle('on', b.dataset.color === (room.ownerColor || 'white')));
 
     this.el.spectatorCount.textContent = room.spectators ? room.spectators + ' spectator(s) watching' : '';
     const me = mySeat != null ? room.players[mySeat] : null;

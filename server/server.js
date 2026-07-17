@@ -79,6 +79,8 @@ const EMPTY_ROOM_MS = 10 * 60 * 1000;
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';       // no 0/O/1/I
 
+const SEAT_NAME = ['bottom', 'left', 'top', 'right'];
+
 function makeCode() {
   let code;
   do {
@@ -98,8 +100,10 @@ class Room {
     /** Sparse, indexed by SEAT (0 bottom, 1 left, 2 top, 3 right). */
     this.players = [null, null, null, null];
     this.spectators = new Set();       // socket ids
+    this.ownerId = null;               // playerId who created the room
+    this.ownerColor = 'white';         // which coins the OWNER'S team plays
     this.world = World.fromLayout();
-    this.state = RulesEngine.newState('online', this.playerCount);
+    this.state = RulesEngine.newState('online', this.playerCount, this.colorSwap);
     this.started = false;
     this.rematch = new Set();          // playerIds
     this.turnTimer = null;
@@ -128,6 +132,25 @@ class Room {
     return this.seats.filter(s => this.players[s] && this.players[s].connected).length + this.spectators.size;
   }
 
+  /**
+   * The owner picks a colour for THEIR team; the engine wants the equivalent
+   * boolean (false == team 0 plays white). Derived rather than stored so that
+   * an owner who changes seats keeps the colour they asked for instead of
+   * silently handing it to the other side.
+   */
+  get colorSwap() {
+    const seat = this.ownerId ? this.seatOf(this.ownerId) : -1;
+    const team = Utils.teamOf(seat < 0 ? 0 : seat, this.playerCount);
+    return this.ownerColor === 'white' ? team === 1 : team === 0;
+  }
+
+  /** The owner's seat left for good: hand the room to whoever is still here. */
+  reassignOwner() {
+    if (this.ownerId && this.seatOf(this.ownerId) >= 0) return;
+    const heir = this.seats.map(s => this.players[s]).find(Boolean);
+    this.ownerId = heir ? heir.playerId : null;
+  }
+
   publicView() {
     return {
       code: this.code,
@@ -137,13 +160,16 @@ class Room {
         id: p.playerId, strikerColor: p.strikerColor
       } : null),
       spectators: this.spectators.size,
-      started: this.started
+      started: this.started,
+      ownerId: this.ownerId,
+      ownerColor: this.ownerColor,
+      colorSwap: this.colorSwap
     };
   }
 
   reset() {
     this.world.reset();
-    this.state = RulesEngine.newState('online', this.playerCount);
+    this.state = RulesEngine.newState('online', this.playerCount, this.colorSwap);
     this.world.resetStriker(this.state.turn);
     this.started = false;
     this.rematch.clear();
@@ -194,7 +220,7 @@ function scheduleEmptyCheck(room) {
 function startGame(room) {
   room.started = true;
   room.world.reset();
-  room.state = RulesEngine.newState('online', room.playerCount);
+  room.state = RulesEngine.newState('online', room.playerCount, room.colorSwap);
   room.world.resetStriker(room.state.turn);
   room.rematch.clear();
 
@@ -300,6 +326,7 @@ io.on('connection', (socket) => {
     const room = new Room(makeCode(), Number(p.playerCount) === 4 ? 4 : 2);
     rooms.set(room.code, room);
 
+    room.ownerId = playerId;
     room.players[0] = {
       playerId, name, socketId: socket.id, ready: false, connected: true,
       index: 0, strikerColor: sanitizeColor(p.strikerColor)
@@ -387,6 +414,88 @@ io.on('connection', (socket) => {
     systemMessage(room, pl.name + ' reconnected');
     if (room.started) room.armTurnTimer();
   }
+
+  /* ---------- pick a side (and, in doubles, a team) ---------- */
+  socket.on('choose-seat', (p = {}, cb) => {
+    const s = socket.data.session;
+    if (!s) return fail(cb, 'Not in a room');
+    const room = getRoom(s.code);
+    if (!room) return fail(cb, 'Room not found');
+    if (room.started) return fail(cb, 'The game has already started');
+
+    const seat = Number(p.seat);
+    if (!room.seats.includes(seat)) return fail(cb, 'That seat is not in play');
+
+    const cur = room.seatOf(s.playerId);
+    if (cur === seat) return ack(cb, { seat, room: room.publicView() });
+    if (room.players[seat]) return fail(cb, 'That seat is taken');
+
+    let pl;
+    if (cur >= 0) {
+      pl = room.players[cur];
+      room.players[cur] = null;
+    } else {
+      // a spectator sitting down
+      room.spectators.delete(socket.id);
+      s.spectator = false;
+      pl = {
+        playerId: s.playerId, name: sanitizeName(p.name), socketId: socket.id,
+        connected: true, strikerColor: sanitizeColor(p.strikerColor)
+      };
+    }
+    pl.index = seat;
+    pl.ready = false;                  // changing sides always un-readies you
+    room.players[seat] = pl;
+
+    ack(cb, { seat, room: room.publicView() });
+    broadcastRoom(room);
+    systemMessage(room, pl.name + ' took the ' + SEAT_NAME[seat] + ' side');
+  });
+
+  /* ---------- owner picks their team's coins ---------- */
+  socket.on('set-team-color', (p = {}) => {
+    const s = socket.data.session;
+    if (!s) return;
+    const room = getRoom(s.code);
+    if (!room || room.started) return;
+    if (s.playerId !== room.ownerId) return;             // owner only
+
+    const color = p.color === 'black' ? 'black' : 'white';
+    if (color === room.ownerColor) return;
+    room.ownerColor = color;
+    // A colour change invalidates everyone's "ready": you agreed to a different game.
+    for (const seat of room.seats) if (room.players[seat]) room.players[seat].ready = false;
+    broadcastRoom(room);
+    systemMessage(room, teamNames(room, Utils.teamOf(room.seatOf(room.ownerId), room.playerCount)) +
+      ' will play the ' + color + ' coins');
+  });
+
+  /* ---------- live aim, so the room watches the shot being lined up ---------- */
+  socket.on('aim', (p = {}) => {
+    const s = socket.data.session;
+    if (!s) return;
+    const room = getRoom(s.code);
+    if (!room || !room.started || room.state.over) return;
+
+    const seat = room.seatOf(s.playerId);
+    if (seat < 0 || seat !== room.state.turn) return;    // only the shooter aims
+
+    // Cosmetic relay only: it never touches room.world, so a lost or forged
+    // aim packet cannot change the outcome of the shot.
+    if (p.off) return socket.to(room.code).emit('aim', { seat, off: true });
+
+    const u = Number(p.u), angle = Number(p.angle), power = Number(p.power);
+    if (!isFinite(u) || !isFinite(angle) || !isFinite(power)) return;
+
+    socket.to(room.code).emit('aim', {
+      seat,
+      u: Utils.clampStrikerU(u),
+      aiming: !!p.aiming,
+      placing: !!p.placing,
+      angle,
+      power: Math.max(0, Math.min(1, power))
+    });
+  });
 
   /* ---------- ready ---------- */
   socket.on('player-ready', (p = {}) => {
@@ -495,6 +604,7 @@ io.on('connection', (socket) => {
     if (explicit) {
       room.players[seat] = null;
       room.rematch.delete(s.playerId);
+      room.reassignOwner();
       sock.leave(room.code);
       systemMessage(room, pl.name + ' left the room');
       io.to(room.code).emit('player-left', { seat, name: pl.name, permanent: true });
@@ -518,6 +628,7 @@ io.on('connection', (socket) => {
       if (!cur || cur.connected) return;
       room.players[seat] = null;
       room.started = false;
+      room.reassignOwner();
       systemMessage(room, cur.name + ' did not come back.');
       io.to(room.code).emit('player-left', { seat, name: cur.name, permanent: true });
       broadcastRoom(room);

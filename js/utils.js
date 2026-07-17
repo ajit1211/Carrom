@@ -23,19 +23,19 @@ var CONFIG = (function buildConfig() {
   var PLAY = PLAY_MAX - PLAY_MIN;   // 744
   var CENTER = BOARD_SIZE / 2;      // 450
 
-  var COIN_R = 18;           // enlarged for readability (was ratio-accurate 15.5)
-  var STRIKER_R = 24;        // enlarged striker to match
-  var POCKET_R = 31;         // pocket scaled up so the bigger striker still drops
+  var COIN_R = 21;           // enlarged for readability (was ratio-accurate 15.5)
+  var STRIKER_R = 27;        // enlarged striker to match
+  var POCKET_R = 34;         // pocket scaled up so the bigger striker still drops
   var POCKET_INSET = 6;      // pocket centre pushed slightly into the corner
 
   // Base-line block (repeated on all four sides; rotated per side).
   var INSET = 115;                       // distance from playfield edge to the outer base line
-  var GAP = 13;                          // distance between the two base lines
-  var BASE_CIRCLE_R = 12.5;              // red circles that terminate each base line
+  var GAP = 26;                          // distance between the two base lines
+  var BASE_CIRCLE_R = 17;                // red circles that terminate each base line
   var BASE_X0 = PLAY_MIN + INSET;        // 193
   var BASE_X1 = PLAY_MAX - INSET;        // 707
 
-  var CENTER_CIRCLE_R = 94;              // big centre circle, scaled with the coins
+  var CENTER_CIRCLE_R = 108;             // big centre circle, scaled with the coins
   var INNER_CIRCLE_R = COIN_R + 3;
 
   return {
@@ -96,9 +96,10 @@ var CONFIG = (function buildConfig() {
       // Striker rests centred between the two base lines: the outer line sits
       // INSET from the cushion, the inner one GAP further in.
       STRIKER_OFFSET: INSET + GAP / 2,
-      // Striker must not overlap the red circles at the line ends.
-      STRIKER_MIN: BASE_X0 + BASE_CIRCLE_R + STRIKER_R,
-      STRIKER_MAX: BASE_X1 - BASE_CIRCLE_R - STRIKER_R
+      // The rail runs the full length of the base lines, so the striker can be
+      // parked right on top of the red circles at either end.
+      STRIKER_MIN: BASE_X0,
+      STRIKER_MAX: BASE_X1
     },
 
     POCKETS: [
@@ -368,10 +369,19 @@ var Utils = {
     return playerCount === 4 ? (seat % 2) : (seat === 0 ? 0 : 1);
   },
 
-  colorOfTeam: function (team) { return team === 0 ? 'white' : 'black'; },
+  /**
+   * Which coins a team plays. `swap` is the room owner's choice: false (the
+   * default) gives team 0 the white coins, true hands them the black ones.
+   * It is a single boolean carried in the game state, so client and server
+   * always agree on who owns which colour.
+   */
+  colorOfTeam: function (team, swap) {
+    var whiteTeam = swap ? 1 : 0;
+    return team === whiteTeam ? 'white' : 'black';
+  },
 
-  colorOfSeat: function (seat, playerCount) {
-    return Utils.colorOfTeam(Utils.teamOf(seat, playerCount));
+  colorOfSeat: function (seat, playerCount, swap) {
+    return Utils.colorOfTeam(Utils.teamOf(seat, playerCount), swap);
   },
 
   /** Your partner's seat, or your own in singles. */

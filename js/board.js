@@ -394,6 +394,79 @@ var Board = class Board {
 
   /* ---------------- overlays drawn on top of the coins ---------------- */
 
+  /**
+   * A name plate on the frame beside every occupied seat, so it is always
+   * obvious who is sitting on which side.
+   *
+   * Each plate starts rotated by -rot(seat) — the inverse of the view rotation
+   * that seat's own player uses — so it sits square to its own side of the
+   * board. It is then flipped if that would leave it upside-down on THIS
+   * screen: a name you cannot read tells you nothing about who is sitting
+   * there. Plates on the left/right bands stay at 90 degrees, which is
+   * readable and fits the narrow frame.
+   *
+   * @param {Array<{seat:number,name:string,color:'white'|'black',active:boolean}>} labels
+   * @param {number} viewRot the canvas rotation this player is looking through
+   */
+  drawSeatLabels(ctx, labels, viewRot) {
+    const S = CONFIG.BOARD_SIZE, m = CONFIG.FRAME / 2, C = CONFIG.CENTER;
+    const anchor = [
+      { x: C, y: S - m }, { x: m, y: C }, { x: C, y: m }, { x: S - m, y: C }
+    ];
+
+    ctx.save();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+
+    for (const L of labels) {
+      const a = anchor[L.seat];
+      if (!a) continue;
+
+      let rot = -Utils.railFor(L.seat).rot;
+      const onScreen = Math.atan2(Math.sin(rot + (viewRot || 0)), Math.cos(rot + (viewRot || 0)));
+      if (Math.abs(onScreen) > Math.PI / 2 + 0.01) rot += Math.PI;
+
+      ctx.save();
+      ctx.translate(a.x, a.y);
+      ctx.rotate(rot);
+
+      ctx.font = '700 21px Outfit, system-ui, sans-serif';
+      const name = this._ellipsis(ctx, L.name, 190);
+      const tw = ctx.measureText(name).width;
+      const padL = 11, dotR = 6.5, gap = 9, padR = 15, h = 30;
+      const w = padL + dotR * 2 + gap + tw + padR;
+
+      ctx.fillStyle = L.active ? 'rgba(240,180,41,.94)' : 'rgba(10,12,18,.74)';
+      this._roundRect(ctx, -w / 2, -h / 2, w, h, h / 2);
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = L.active ? 'rgba(255,255,255,.6)' : 'rgba(255,255,255,.20)';
+      ctx.stroke();
+
+      // the coin colour this seat plays
+      ctx.beginPath();
+      ctx.arc(-w / 2 + padL + dotR, 0, dotR, 0, Math.PI * 2);
+      ctx.fillStyle = L.color === 'white' ? CONFIG.COLORS.white : CONFIG.COLORS.black;
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(0,0,0,.55)';
+      ctx.stroke();
+
+      ctx.fillStyle = L.active ? '#16130a' : '#e8ecf4';
+      ctx.fillText(name, -w / 2 + padL + dotR * 2 + gap, 1);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  /** Trim `text` with an ellipsis until it fits `max` px in the current font. */
+  _ellipsis(ctx, text, max) {
+    let s = String(text == null ? '' : text);
+    if (ctx.measureText(s).width <= max) return s;
+    while (s.length > 1 && ctx.measureText(s + '…').width > max) s = s.slice(0, -1);
+    return s + '…';
+  }
+
   /** Highlights the base rail the current shooter is allowed to use. */
   drawActiveRail(ctx, seat, color, t) {
     const L = CONFIG.LAYOUT;

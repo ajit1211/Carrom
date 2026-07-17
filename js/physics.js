@@ -400,23 +400,39 @@ var World = class World {
   /* ---------------- aim prediction (pure geometry, no side effects) ---------------- */
 
   /**
-   * Cast the striker along `dir` and report the first thing it touches,
-   * bouncing off cushions up to `maxBounces` times.
-   * @returns {{points:{x,y}[], hit:Body|null, hitPoint:{x,y}|null, hitNormal:{x,y}|null, ghost:{x,y}|null}}
+   * How far the striker actually coasts at `power`, in board units.
+   *
+   * Sliding friction is a constant deceleration, so the range is the classic
+   * v^2 / 2a. The aim guide MUST use this: a straight ray with two cushion
+   * bounces promises ricochets a soft shot can never reach, which is what made
+   * aiming feel like it was lying to the player.
    */
-  predict(ox, oy, dirX, dirY, radius, maxBounces = 2) {
+  static shotRange(power) {
+    const v = CONFIG.MIN_SHOT_SPEED + Utils.clamp(power, 0, 1) * (CONFIG.MAX_SHOT_SPEED - CONFIG.MIN_SHOT_SPEED);
+    return (v * v) / (2 * CONFIG.FRICTION_DECEL);
+  }
+
+  /**
+   * Cast the striker along `dir` and report the first thing it touches,
+   * bouncing off cushions up to `maxBounces` times, for at most `maxDist`
+   * board units of travel.
+   * @returns {{points:{x,y}[], hit:Body|null, hitPoint:{x,y}|null, hitNormal:{x,y}|null, ghost:{x,y}|null, spent:boolean}}
+   */
+  predict(ox, oy, dirX, dirY, radius, maxBounces = 2, maxDist = Infinity) {
     const pts = [{ x: ox, y: oy }];
     let px = ox, py = oy, dx = dirX, dy = dirY;
+    let left = maxDist;
     const lo = CONFIG.PLAY_MIN + radius, hi = CONFIG.PLAY_MAX - radius;
+    const miss = (spent) => ({ points: pts, hit: null, hitPoint: null, hitNormal: null, ghost: null, spent: !!spent });
 
-    for (let bounce = 0; bounce <= maxBounces; bounce++) {
+    for (let bounce = 0; bounce <= maxBounces && left > 0; bounce++) {
       let bestT = Infinity, bestBody = null;
 
       // 1) nearest coin along the ray
       for (const b of this.coins) {
         if (!b.active || b.potted) continue;
         const t = this._rayCircle(px, py, dx, dy, b.x, b.y, radius + b.r);
-        if (t !== null && t > 1e-4 && t < bestT) { bestT = t; bestBody = b; }
+        if (t !== null && t < bestT) { bestT = t; bestBody = b; }
       }
 
       // 2) nearest cushion
@@ -425,6 +441,12 @@ var World = class World {
       if (dx < -1e-9) { const t = (lo - px) / dx; if (t < wallT) { wallT = t; nx = 1; ny = 0; } }
       if (dy > 1e-9) { const t = (hi - py) / dy; if (t < wallT) { wallT = t; nx = 0; ny = -1; } }
       if (dy < -1e-9) { const t = (lo - py) / dy; if (t < wallT) { wallT = t; nx = 0; ny = 1; } }
+
+      // 3) does the striker run out of momentum before reaching either?
+      if (left < Math.min(bestT, wallT)) {
+        pts.push({ x: px + dx * left, y: py + dy * left });
+        return miss(true);
+      }
 
       if (bestBody && bestT <= wallT) {
         const hx = px + dx * bestT, hy = py + dy * bestT;
@@ -437,11 +459,13 @@ var World = class World {
           hit: bestBody,
           hitPoint: { x: hx, y: hy },
           hitNormal: n,
-          ghost: { x: hx, y: hy }
+          ghost: { x: hx, y: hy },
+          spent: false
         };
       }
 
       if (!isFinite(wallT)) break;
+      left -= wallT;
       px += dx * wallT; py += dy * wallT;
       pts.push({ x: px, y: py });
 
@@ -451,17 +475,26 @@ var World = class World {
       dy -= 2 * dot * ny;
       // nudge off the wall to avoid re-hitting it at t=0
       px += dx * 0.01; py += dy * 0.01;
+      left -= 0.01;
     }
 
-    return { points: pts, hit: null, hitPoint: null, hitNormal: null, ghost: null };
+    return miss(false);
   }
 
-  /** Smallest positive t with |o + d*t - c| == R, or null. `d` must be unit. */
+  /**
+   * Smallest non-negative t with |o + d*t - c| == R, or null. `d` must be unit.
+   *
+   * An origin already overlapping the circle and closing on it returns 0. The
+   * striker may legally be parked on top of a coin sitting on the base line,
+   * and without this the guide skips that coin and draws straight through it.
+   * Overlapping while heading away is still a miss: the striker leaves it.
+   */
   _rayCircle(ox, oy, dx, dy, cx, cy, R) {
     const mx = ox - cx, my = oy - cy;
     const b = mx * dx + my * dy;
     const c = mx * mx + my * my - R * R;
-    if (c > 0 && b > 0) return null;         // pointing away and outside
+    if (b > 0) return null;                  // heading away from the centre
+    if (c <= 0) return 0;                    // already overlapping and closing
     const disc = b * b - c;
     if (disc < 0) return null;
     const t = -b - Math.sqrt(disc);

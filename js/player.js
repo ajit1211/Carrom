@@ -6,7 +6,7 @@
 var Player = class Player {
   /**
    * @param {number} index seat: 0 bottom, 1 left, 2 top, 3 right
-   * @param {object} o {name, id, local, strikerColor, playerCount}
+   * @param {object} o {name, id, local, strikerColor, playerCount, colorSwap}
    */
   constructor(index, o = {}) {
     this.index = index;
@@ -19,7 +19,7 @@ var Player = class Player {
 
     const count = o.playerCount || 2;
     this.team = Utils.teamOf(index, count);
-    this.color = Utils.colorOfTeam(this.team);
+    this.color = Utils.colorOfTeam(this.team, o.colorSwap);
   }
 
   get initial() { return (this.name || '?').trim().charAt(0).toUpperCase() || '?'; }
@@ -50,10 +50,11 @@ var Player = class Player {
     };
   }
 
-  static from(o, playerCount) {
+  static from(o, playerCount, colorSwap) {
     const p = new Player(o.index, {
       name: o.name, id: o.id, local: false,
-      strikerColor: o.strikerColor, playerCount: playerCount || 2
+      strikerColor: o.strikerColor, playerCount: playerCount || 2,
+      colorSwap: colorSwap
     });
     p.ready = !!o.ready;
     p.connected = o.connected !== false;

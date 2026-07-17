@@ -35,7 +35,7 @@ class NetworkManager extends EventBus {
 
   _wire() {
     const relay = [
-      'room-update', 'game-start', 'shot', 'state-sync', 'turn-change',
+      'room-update', 'game-start', 'aim', 'shot', 'state-sync', 'turn-change',
       'coin-pocket', 'game-over', 'chat', 'player-left', 'player-joined',
       'rematch-status', 'opponent-timeout', 'system'
     ];
@@ -130,11 +130,43 @@ class NetworkManager extends EventBus {
   ready(flag) { this.sock.send('player-ready', { ready: flag }); }
 
   /**
+   * Take a different seat in the lobby — which is how a player picks their
+   * side and, in doubles, their team. Rejects once the game has started.
+   */
+  async chooseSeat(seat) {
+    const me = Profile.load();
+    const res = await this.sock.request('choose-seat', {
+      seat, name: me.name, strikerColor: me.strikerColor
+    });
+    if (res && typeof res.seat === 'number') { this.seat = res.seat; this.spectator = false; }
+    if (res && res.room) this.room = res.room;
+    return res;
+  }
+
+  /**
+   * Room owner only: hand their own team the white or the black coins.
+   * @param {'white'|'black'} color
+   */
+  setTeamColor(color) { this.sock.send('set-team-color', { color }); }
+
+  /**
    * Ask the server to run our shot. `u` is the striker's chosen position
    * along the base rail, so the server can validate it against the rules.
    */
   shoot(u, angle, power) {
     this.sock.send('shoot', { u, angle, power });
+  }
+
+  /**
+   * Stream the shot we are lining up so the room can watch us aim.
+   * Cosmetic only — the server relays it without touching the world, so a
+   * lost or spoofed aim packet can never affect the outcome.
+   * @param {{u:number, aiming:boolean, placing:boolean, angle:number, power:number}|null} a null == stop showing
+   */
+  aim(a) {
+    this.sock.send('aim', a
+      ? { u: a.u, aiming: !!a.aiming, placing: !!a.placing, angle: a.angle, power: a.power }
+      : { off: true });
   }
 
   chat(text) { this.sock.send('chat', { text: String(text).slice(0, 160) }); }

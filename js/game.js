@@ -62,6 +62,11 @@ class Game extends EventBus {
     this.keyChargeDir = 0;
     this._sliderOn = null;
 
+    /* the shot another seat is lining up right now (online only) */
+    this.remoteAim = null;
+    this._aimSendT = 0;
+    this._lastAimSent = null;
+
     /* shot bookkeeping */
     this.shotPockets = [];
     this.shotTouched = false;
@@ -111,16 +116,19 @@ class Game extends EventBus {
     if (mode === 'practice') this.playerCount = 2;
 
     this.world = World.fromLayout();
-    this.state = RulesEngine.newState(mode, this.playerCount);
+    this.state = RulesEngine.newState(mode, this.playerCount, opts.colorSwap);
 
     const profile = Profile.load();
 
     if (mode === 'online') {
       this.localSeat = (typeof opts.seat === 'number') ? opts.seat : null;
       this.spectator = this.localSeat == null;
-      this.players = this._seatArray(seat =>
-        Player.from(opts.names[seat] || { index: seat, name: this._defaultName(seat) }, this.playerCount));
+      // The server's state carries the room owner's colour pick, so read it
+      // before the players are built — their coin colour depends on it.
       if (opts.state) Object.assign(this.state, opts.state);
+      this.players = this._seatArray(seat =>
+        Player.from(opts.names[seat] || { index: seat, name: this._defaultName(seat) },
+          this.playerCount, this.state.colorSwap));
       if (opts.world) this.world.restore(opts.world);
     } else if (mode === 'local') {
       this.localSeat = null;    // every seat is local
@@ -128,6 +136,7 @@ class Game extends EventBus {
       this.players = this._seatArray(seat => new Player(seat, {
         name: seat === 0 ? profile.name : this._defaultName(seat),
         playerCount: this.playerCount,
+        colorSwap: this.state.colorSwap,
         strikerColor: seat === 0 ? profile.strikerColor : CONFIG.STRIKER_COLORS[(seat + 2) % CONFIG.STRIKER_COLORS.length].face
       }));
     } else {
@@ -136,6 +145,7 @@ class Game extends EventBus {
       this.players = this._seatArray(seat => new Player(seat, {
         name: seat === 0 ? profile.name : 'Board',
         playerCount: 2,
+        colorSwap: this.state.colorSwap,
         strikerColor: profile.strikerColor
       }));
     }
@@ -153,11 +163,13 @@ class Game extends EventBus {
     this.shotPockets = [];
     this._endShown = false;
     this._sliderOn = null;
+    this.remoteAim = null;
+    this._lastAimSent = null;
     this.aim.cancel();
     this.drag = null;
     this._resetTimer();
 
-    this.ui.setPlayers(this.players, this.playerCount, this.localSeat);
+    this.ui.setPlayers(this.players, this.playerCount, this.localSeat, this.state.colorSwap);
     this.ui.enableChat(mode === 'online');
     this.ui.setNetBadge(mode === 'online' ? { text: '● live' } : null);
     this.ui.setHint(this._hintText());
@@ -179,7 +191,9 @@ class Game extends EventBus {
   }
 
   _defaultName(seat) {
-    if (this.mode === 'online') return Utils.colorOfSeat(seat, this.playerCount) === 'white' ? 'White' : 'Black';
+    if (this.mode === 'online') {
+      return Utils.colorOfSeat(seat, this.playerCount, this.state.colorSwap) === 'white' ? 'White' : 'Black';
+    }
     return 'Player ' + (Utils.seatsFor(this.playerCount).indexOf(seat) + 1);
   }
 
@@ -427,10 +441,29 @@ class Game extends EventBus {
     this.net.on('shot', (p) => {
       if (this.mode !== 'online') return;
       if (p.seat === this.localSeat) return;            // we already played it
+      this.remoteAim = null;
       this.state.turn = p.seat;
       this.world.resetStriker(p.seat, p.u);
       this._applyStrikerSkin();
       this._applyShot(p.angle, p.power);
+    });
+
+    /* another seat is lining a shot up: mirror their striker and their aim */
+    this.net.on('aim', (p) => {
+      if (this.mode !== 'online' || !p) return;
+      if (p.seat === this.localSeat) return;
+
+      // "Stop showing it" must always land, even mid-simulation, or a stale
+      // overlay hangs over the board until the next sync clears it.
+      if (p.off) { this.remoteAim = null; return; }
+
+      if (this.simulating || this.awaitingSync || this.state.over) return;
+      if (p.seat !== this.state.turn) return;
+      this.remoteAim = p;
+      if (typeof p.u === 'number') {
+        const pos = Utils.strikerPos(p.seat, Utils.clampStrikerU(p.u));
+        this.world.striker.place(pos.x, pos.y);
+      }
     });
 
     /* authoritative settled snapshot */
@@ -470,6 +503,7 @@ class Game extends EventBus {
     const p = this.pendingSync;
     this.pendingSync = null;
     this.awaitingSync = false;
+    this.remoteAim = null;
     if (!p) return;
 
     if (p.world) this.world.restore(p.world);
@@ -541,10 +575,45 @@ class Game extends EventBus {
       this._tickTimer(dt);
     }
 
+    if (this.mode === 'online') this._streamAim(dt);
+
     for (const c of this.world.coins) c.updateVisual(dt);
     this.world.striker.updateVisual(dt);
     this.particles.update(dt);
     this._syncStrikerSlider();
+  }
+
+  /**
+   * Push the shot we are lining up to everyone else in the room, ~20 times a
+   * second, so opponents and spectators watch the striker being placed and the
+   * angle being chosen instead of the cluster exploding out of nowhere.
+   *
+   * The pull length is not sent: it is a pure function of the power, so the
+   * receiver reconstructs the rubber band exactly.
+   */
+  _streamAim(dt) {
+    if (this.spectator) return;
+    this._aimSendT -= dt;
+    if (this._aimSendT > 0) return;
+    this._aimSendT = 0.05;
+
+    // Three states worth showing: winding up a shot, sliding the disc along the
+    // rail, or simply sitting there. Only the first two deserve an overlay.
+    const dragging = this.drag === 'aim' && this.aim.active;
+    const aiming = dragging && !this.aim.inDeadzone;
+    const p = this.canShoot ? {
+      u: this.strikerU,
+      aiming,
+      placing: dragging && !aiming,
+      angle: aiming ? this.aim.angle : 0,
+      power: aiming ? this.aim.power : 0
+    } : null;
+
+    // Say nothing while nothing moves: a held finger costs zero packets.
+    const key = p ? [p.u.toFixed(1), p.aiming, p.placing, p.angle.toFixed(4), p.power.toFixed(3)].join(',') : 'off';
+    if (key === this._lastAimSent) return;
+    this._lastAimSent = key;
+    this.net.aim(p);
   }
 
   /** Keep the knob glued to the striker (slider, keys, turn change, reset). */
@@ -603,7 +672,7 @@ class Game extends EventBus {
     this._refreshHud();
 
     if (this.mode !== 'practice' && shooterSeat === 0) {
-      const myColor = Utils.colorOfSeat(0, this.playerCount);
+      const myColor = Utils.colorOfSeat(0, this.playerCount, this.state.colorSwap);
       const banked = this.shotPockets.filter(e => e.type === myColor).length;
       if (banked) Profile.addCoins(banked, this.shotPockets.some(e => e.type === 'queen'));
     }
@@ -682,6 +751,26 @@ class Game extends EventBus {
     });
   }
 
+  /**
+   * Who is sitting on which side, for the name plates on the frame.
+   * Practice has nobody to name but you, so only your own rail gets a plate.
+   */
+  _seatLabels() {
+    const seats = this.mode === 'practice' ? [0] : Utils.seatsFor(this.playerCount);
+    const out = [];
+    for (const seat of seats) {
+      const p = this.players[seat];
+      if (!p) continue;
+      out.push({
+        seat,
+        name: p.name + (seat === this.localSeat ? ' (you)' : ''),
+        color: Utils.colorOfSeat(seat, this.playerCount, this.state.colorSwap),
+        active: !this.state.over && seat === this.shooter
+      });
+    }
+    return out;
+  }
+
   /** Names of everyone on a team, e.g. "Ajit & Ravi". */
   _teamNames(team) {
     return Utils.seatsFor(this.playerCount)
@@ -748,6 +837,7 @@ class Game extends EventBus {
     if (this.viewRot) { ctx.translate(C, C); ctx.rotate(this.viewRot); ctx.translate(-C, -C); }
 
     this.board.draw(ctx);
+    this.board.drawSeatLabels(ctx, this._seatLabels(), this.viewRot);
 
     // rail the current shooter may use
     if (!this.state.over && !this.simulating) {
@@ -764,6 +854,7 @@ class Game extends EventBus {
     s.draw(ctx, opts);
 
     if (this.drag === 'aim' && this.aim.active) this._drawAim(ctx);
+    else if (this.remoteAim && !this.simulating) this._drawRemoteAim(ctx);
 
     this.particles.draw(ctx);
 
@@ -779,21 +870,44 @@ class Game extends EventBus {
     if (this.viewRot) ctx.rotate(-this.viewRot);
   }
 
+  /** Our own aim, driven by the live pointer. */
+  _drawAim(ctx) {
+    const s = this.world.striker;
+    /* ---------- 0%: repositioning, not aiming ---------- */
+    if (this.aim.inDeadzone) { this._drawRepositionHint(ctx, s); return; }
+    this._paintAim(ctx, s, this.aim.dir, this.aim.power, this.aim.pointerX, this.aim.pointerY);
+  }
+
+  /**
+   * The shot another seat is lining up right now, drawn exactly like our own
+   * so everyone watching sees the same angle and power the shooter sees.
+   *
+   * The pull length is a pure function of the power, so the rubber band is
+   * reconstructed here rather than sent over the wire.
+   */
+  _drawRemoteAim(ctx) {
+    const a = this.remoteAim;
+    const s = this.world.striker;
+    // Their striker's position is mirrored every packet; the overlay only
+    // appears while they are actually doing something with it.
+    if (!a.aiming) { if (a.placing) this._drawRepositionHint(ctx, s); return; }
+
+    const d = { x: Math.cos(a.angle), y: Math.sin(a.angle) };
+    const power = Utils.clamp(a.power, 0, 1);
+    const pull = CONFIG.AIM_DEADZONE + power * (CONFIG.MAX_PULL - CONFIG.AIM_DEADZONE);
+    this._paintAim(ctx, s, d, power, s.x - d.x * pull, s.y - d.y * pull);
+  }
+
   /**
    * Aiming visuals, slingshot style. Pull from ANY angle — the striker fires
    * along (striker - pointer), a full 360 degrees of aim.
+   *
+   * Everything drawn here is what the solver will actually do: the guide stops
+   * at the first coin the striker really touches (including one it is already
+   * overlapping) and never runs past the shot's true range, v^2 / 2a.
    */
-  _drawAim(ctx) {
-    const s = this.world.striker;
-    const d = this.aim.dir;
-    const power = this.aim.power;
+  _paintAim(ctx, s, d, power, ptrX, ptrY) {
     const col = this._powerColor(power);
-
-    /* ---------- 0%: repositioning, not aiming ---------- */
-    if (this.aim.inDeadzone) {
-      this._drawRepositionHint(ctx, s);
-      return;
-    }
 
     /* ---------- 1. the pull-back: rubber band + ghost striker ---------- */
     ctx.save();
@@ -802,32 +916,32 @@ class Game extends EventBus {
     ctx.lineWidth = 2 + power * 3;
     ctx.beginPath();
     ctx.moveTo(s.x, s.y);
-    ctx.lineTo(this.aim.pointerX, this.aim.pointerY);
+    ctx.lineTo(ptrX, ptrY);
     ctx.stroke();
 
     ctx.globalAlpha = 0.30 + power * 0.28;
     ctx.fillStyle = s.face;
     ctx.beginPath();
-    ctx.arc(this.aim.pointerX, this.aim.pointerY, s.r, 0, Math.PI * 2);
+    ctx.arc(ptrX, ptrY, s.r, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
     ctx.strokeStyle = col;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(this.aim.pointerX, this.aim.pointerY, s.r, 0, Math.PI * 2);
+    ctx.arc(ptrX, ptrY, s.r, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
 
     if (!this.settings.aimGuide) { this._drawPowerLabel(ctx, s, d, power, col); return; }
 
     /* ---------- 2. where does this shot actually land? ---------- */
-    const pr = this.world.predict(s.x, s.y, d.x, d.y, s.r, 2);
+    const pr = this.world.predict(s.x, s.y, d.x, d.y, s.r, 2, World.shotRange(power));
 
-    const reach = 70 + power * 300;
-    const toHit = pr.hitPoint ? Utils.dist(s.x, s.y, pr.hitPoint.x, pr.hitPoint.y) : Infinity;
-    const len = Math.min(reach, toHit);
-    const tipX = s.x + d.x * len;
-    const tipY = s.y + d.y * len;
+    // points[1] is the first thing on the line: the coin, the cushion, or the
+    // spot the striker simply runs out of momentum. The arrow ends there.
+    const first = pr.points[1] || pr.points[0];
+    const tipX = first.x;
+    const tipY = first.y;
 
     ctx.save();
     ctx.strokeStyle = 'rgba(255,255,255,.30)';
@@ -839,7 +953,25 @@ class Game extends EventBus {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    this._arrow(ctx, s.x + d.x * (s.r + 2), s.y + d.y * (s.r + 2), tipX, tipY, 3 + power * 7, col);
+    // A striker parked on top of a coin contacts it at zero distance; there is
+    // no shaft to draw and an arrow would point back at ourselves.
+    if (Utils.dist(s.x, s.y, tipX, tipY) > s.r + 8) {
+      this._arrow(ctx, s.x + d.x * (s.r + 2), s.y + d.y * (s.r + 2), tipX, tipY, 3 + power * 7, col);
+    }
+
+    // Out of steam before touching anything: mark where it actually stops.
+    if (pr.spent) {
+      const end = pr.points[pr.points.length - 1];
+      ctx.strokeStyle = col;
+      ctx.globalAlpha = 0.7;
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.arc(end.x, end.y, s.r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
 
     /* ---------- 3. the coin we are aiming at ---------- */
     if (pr.hit && pr.ghost) {
@@ -999,7 +1131,7 @@ class Game extends EventBus {
     const lines = [
       'mode ' + this.mode + ' ' + this.playerCount + 'p' + (this.spectator ? ' (spectator)' : ''),
       'seat ' + this.state.turn + ' team ' + Utils.teamOf(this.state.turn, this.playerCount) +
-        ' (' + Utils.colorOfSeat(this.state.turn, this.playerCount) + ')',
+        ' (' + Utils.colorOfSeat(this.state.turn, this.playerCount, this.state.colorSwap) + ')',
       'localSeat ' + this.localSeat + '  rot ' + (this.viewRot * 180 / Math.PI).toFixed(0) + '°',
       'sim ' + this.simulating + '  awaitSync ' + this.awaitingSync,
       'coins W' + this.world.coinsLeft('white') + ' B' + this.world.coinsLeft('black') + ' Q' + (this.world.queenOnBoard() ? 1 : 0),

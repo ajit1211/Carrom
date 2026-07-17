@@ -278,7 +278,17 @@
         </div>
 
         <p class="format-badge" id="formatBadge">1 v 1</p>
+
+        <div class="owner-colors" id="ownerColors" hidden>
+          <span class="muted">Your team plays</span>
+          <div class="segmented" id="teamColorSeg" role="group" aria-label="Team coin colour">
+            <button type="button" data-color="white" class="on">White</button>
+            <button type="button" data-color="black">Black</button>
+          </div>
+        </div>
+
         <div class="seats" id="seatGrid"></div>
+        <p class="muted center seat-hint">Tap an empty seat to pick your side.</p>
 
         <p class="muted center" id="spectatorCount"></p>
         <button class="btn primary block" id="btnReady">I'm Ready</button>
@@ -289,17 +299,18 @@
   <!-- ══════════════════ GAME ══════════════════ -->
   <section id="screen-game" class="screen game">
     <div class="hud-top glass">
-      <div class="team-card" id="pcard0">
+      <!-- Compact team block: avatar + coins banked. Tap it for the names. -->
+      <div class="team-card" id="pcard0" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" title="Team 1">
         <div class="avatar sm" id="pavatar0">1</div>
         <div class="pc-meta">
-          <strong id="pname0">Player 1</strong>
           <div class="coin-row">
-            <span class="pip white"></span>
+            <span class="pip white" id="ppip0"></span>
             <span class="tally"><b id="pscore0">0</b>/9</span>
             <em id="pqueen0" class="queen-badge" hidden>♛</em>
           </div>
           <div class="coin-bar"><i id="pbar0" style="width:0%"></i></div>
         </div>
+        <div class="team-pop" id="ppop0" hidden></div>
       </div>
 
       <div class="hud-center">
@@ -310,17 +321,17 @@
         <div class="turn-indicator" id="turnIndicator">Your turn</div>
       </div>
 
-      <div class="team-card right" id="pcard1">
+      <div class="team-card right" id="pcard1" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" title="Team 2">
         <div class="pc-meta">
-          <strong id="pname1">Player 2</strong>
           <div class="coin-row">
             <em id="pqueen1" class="queen-badge" hidden>♛</em>
             <span class="tally"><b id="pscore1">0</b>/9</span>
-            <span class="pip black"></span>
+            <span class="pip black" id="ppip1"></span>
           </div>
           <div class="coin-bar"><i id="pbar1" style="width:0%"></i></div>
         </div>
         <div class="avatar sm" id="pavatar1">2</div>
+        <div class="team-pop" id="ppop1" hidden></div>
       </div>
     </div>
 

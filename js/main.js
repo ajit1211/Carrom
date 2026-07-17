@@ -114,6 +114,19 @@
     net.ready(iAmReady);
   });
 
+  /* Picking a seat is how a player picks their side — and their team in doubles. */
+  ui.on('choose-seat', async (seat) => {
+    try {
+      const res = await net.chooseSeat(seat);
+      iAmReady = false;
+      ui.setRoom(res.room, res.seat);
+    } catch (err) {
+      ui.toast(err.message || 'Could not take that seat', 'bad');
+    }
+  });
+
+  ui.on('team-color', (color) => net.setTeamColor(color));
+
   /* ==========================================================
    * online: room events
    * ========================================================== */

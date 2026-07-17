@@ -19,13 +19,15 @@ var RulesEngine = class RulesEngine {
   /**
    * @param {'practice'|'local'|'online'} mode
    * @param {2|4} playerCount
+   * @param {boolean} [colorSwap] room owner's pick: true hands team 0 the black coins
    */
-  static newState(mode, playerCount) {
+  static newState(mode, playerCount, colorSwap) {
     const count = playerCount === 4 ? 4 : 2;
     return {
       mode: mode || 'local',
       playerCount: count,
       seats: Utils.seatsFor(count),   // which seats actually play
+      colorSwap: !!colorSwap,         // which team plays which colour
       turn: 0,                        // seat whose shot it is
       queenPending: null,             // TEAM that owes a "cover"
       queenOwner: null,               // TEAM that has secured the queen
@@ -41,14 +43,14 @@ var RulesEngine = class RulesEngine {
   /* ---------------- seat / team helpers ---------------- */
 
   static teamOf(state, seat) { return Utils.teamOf(seat, state.playerCount); }
-  static colorOf(state, seat) { return Utils.colorOfSeat(seat, state.playerCount); }
-  static colorOfTeam(team) { return Utils.colorOfTeam(team); }
+  static colorOf(state, seat) { return Utils.colorOfSeat(seat, state.playerCount, state.colorSwap); }
+  static colorOfTeam(state, team) { return Utils.colorOfTeam(team, state.colorSwap); }
   static otherTeam(team) { return team === 0 ? 1 : 0; }
   static nextSeat(state, seat) { return Utils.nextSeat(seat, state.playerCount); }
 
   /** Coins of this team still sitting on the bed. */
   static coinsLeft(world, state, team) {
-    return world.coinsLeft(RulesEngine.colorOfTeam(team));
+    return world.coinsLeft(RulesEngine.colorOfTeam(state, team));
   }
 
   /** Coins this team has banked. */
@@ -69,8 +71,8 @@ var RulesEngine = class RulesEngine {
     const seat = state.turn;
     const myTeam = RulesEngine.teamOf(state, seat);
     const oppTeam = RulesEngine.otherTeam(myTeam);
-    const myColor = RulesEngine.colorOfTeam(myTeam);
-    const oppColor = RulesEngine.colorOfTeam(oppTeam);
+    const myColor = RulesEngine.colorOfTeam(state, myTeam);
+    const oppColor = RulesEngine.colorOfTeam(state, oppTeam);
 
     const report = {
       seat,
@@ -277,6 +279,7 @@ var RulesEngine = class RulesEngine {
       turn: state.turn,
       turnTeam: RulesEngine.teamOf(state, state.turn),
       playerCount: state.playerCount,
+      colorSwap: !!state.colorSwap,
       pocketed: [RulesEngine.pocketedCount(world, state, 0), RulesEngine.pocketedCount(world, state, 1)],
       queenOwner: state.queenOwner,
       queenPending: state.queenPending,
